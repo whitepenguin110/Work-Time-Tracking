@@ -1,0 +1,156 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile representing a team member (Graphic Designer or Video Editor) or Admin.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full name of the team member",
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "description": "Google email address",
+          "maxLength": 150
+        },
+        "department": {
+          "type": "string",
+          "description": "Team department",
+          "enum": ["graphic", "video"]
+        },
+        "role": {
+          "type": "string",
+          "description": "User role in the system",
+          "enum": ["admin", "user"]
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the user account is active"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO string timestamp when user registered"
+        }
+      },
+      "required": ["name", "email", "department", "role", "active"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Task category item with preset incentive amount in BDT.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the task category in Bengali",
+          "maxLength": 150
+        },
+        "department": {
+          "type": "string",
+          "description": "Target department for this category",
+          "enum": ["graphic", "video"]
+        },
+        "incentive": {
+          "type": "number",
+          "description": "Incentive in BDT (Taka)"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether this category is currently active for task selection"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO string timestamp when created"
+        }
+      },
+      "required": ["name", "department", "incentive", "active"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Individual work item logged by a team member.",
+      "type": "object",
+      "properties": {
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of the user who owns this task",
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Title or description of the specific task",
+          "maxLength": 200
+        },
+        "categoryId": {
+          "type": "string",
+          "description": "Reference ID to category",
+          "maxLength": 128
+        },
+        "categoryName": {
+          "type": "string",
+          "description": "Snapshot of the category name at task creation",
+          "maxLength": 150
+        },
+        "department": {
+          "type": "string",
+          "description": "Department of the task",
+          "enum": ["graphic", "video"]
+        },
+        "workDate": {
+          "type": "string",
+          "description": "Date work was started (YYYY-MM-DD)",
+          "maxLength": 10
+        },
+        "dueDate": {
+          "type": "string",
+          "description": "Deadline date (YYYY-MM-DD)",
+          "maxLength": 10
+        },
+        "status": {
+          "type": "string",
+          "description": "Current status of the task",
+          "enum": ["pending", "in_progress", "completed"]
+        },
+        "submitDate": {
+          "type": "string",
+          "description": "Submission date if completed (YYYY-MM-DD)",
+          "maxLength": 10
+        },
+        "incentiveAmount": {
+          "type": "number",
+          "description": "Locked incentive amount in BDT when task is completed (0 if incomplete)"
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional notes or work link",
+          "maxLength": 1000
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO string timestamp when task was logged"
+        }
+      },
+      "required": ["ownerUid", "name", "categoryId", "department", "workDate", "dueDate", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "User profile collection"
+    },
+    "/categories/{categoryId}": {
+      "schema": {
+        "$ref": "#/entities/Category"
+      },
+      "description": "Work category definitions and incentive pricing"
+    },
+    "/tasks/{taskId}": {
+      "schema": {
+        "$ref": "#/entities/Task"
+      },
+      "description": "Logged work tasks"
+    }
+  }
+}

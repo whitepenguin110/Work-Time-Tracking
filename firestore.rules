@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isEmailVerified() && (
+        request.auth.token.email == 'whitepenguin110@gmail.com'
+      );
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true)
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUser(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() > 0 && data.email.size() <= 150 &&
+             data.department in ['graphic', 'video'] &&
+             data.role in ['admin', 'user'] &&
+             data.active is bool;
+    }
+
+    function isValidCategory(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 150 &&
+             data.department in ['graphic', 'video'] &&
+             data.incentive is number && data.incentive >= 0 &&
+             data.active is bool;
+    }
+
+    function isValidTask(data) {
+      return data.ownerUid is string && data.ownerUid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.categoryId is string && data.categoryId.size() <= 128 &&
+             data.department in ['graphic', 'video'] &&
+             data.workDate is string && data.workDate.size() <= 10 &&
+             data.dueDate is string && data.dueDate.size() <= 10 &&
+             data.status in ['pending', 'in_progress', 'completed'] &&
+             data.incentiveAmount is number && data.incentiveAmount >= 0;
+    }
+
+    // 1. Users collection
+    match /users/{userId} {
+      allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow list: if isSignedIn() && isAdmin();
+
+      // On register, owner can create their own profile.
+      // If bootstrapped admin, role can be admin, otherwise role must be 'user' and active: true.
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (
+        (isBootstrappedAdmin() && request.resource.data.role in ['admin', 'user']) ||
+        (!isBootstrappedAdmin() && request.resource.data.role == 'user')
+      );
+
+      // On update: Admin can update role, department, active status.
+      // User can only update their name, keeping email, role, department, and active unchanged.
+      allow update: if isSignedIn() && isValidUser(request.resource.data) && (
+        isAdmin() ||
+        (isOwner(userId) &&
+         request.resource.data.email == resource.data.email &&
+         request.resource.data.role == resource.data.role &&
+         request.resource.data.department == resource.data.department &&
+         request.resource.data.active == resource.data.active)
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // 2. Categories collection
+    match /categories/{categoryId} {
+      // Anyone signed in can read/list categories to pick them in task forms
+      allow get, list: if isSignedIn();
+      // Only admin can create, update, or soft-delete categories
+      allow create: if isAdmin() && isValidCategory(request.resource.data);
+      allow update: if isAdmin() && isValidCategory(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // 3. Tasks collection
+    match /tasks/{taskId} {
+      // User can only see their own tasks; admin can see all tasks
+      allow get: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+
+      allow create: if isEmailVerified() &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        isValidTask(request.resource.data);
+
+      allow update: if isEmailVerified() && (
+        (resource.data.ownerUid == request.auth.uid &&
+         request.resource.data.ownerUid == resource.data.ownerUid &&
+         isValidTask(request.resource.data)) ||
+        isAdmin()
+      );
+
+      allow delete: if isSignedIn() && (
+        resource.data.ownerUid == request.auth.uid || isAdmin()
+      );
+    }
+  }
+}

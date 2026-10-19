@@ -1,0 +1,6 @@
+{
+  "name": "কাজের হিসাব",
+  "description": "টিমের গ্রাফিক ডিজাইনার ও ভিডিও এডিটরদের কাজ ও ইনসেনটিভের হিসাব রাখার বাংলা ওয়েব অ্যাপ্লিকেশন।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
