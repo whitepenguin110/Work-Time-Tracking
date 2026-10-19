@@ -1,5 +1,14 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updatePassword,
+  updateProfile
+} from 'firebase/auth';
 import {
   getFirestore,
   doc,
@@ -10,23 +19,24 @@ import {
   query,
   limit
 } from 'firebase/firestore';
+import defaultAppletConfig from '../../firebase-applet-config.json';
 import { INITIAL_CATEGORIES } from '../config/seedCategories';
 
-// Read configuration ONLY from environment variables (standard Vite setup)
+// Read configuration from environment variables with safe fallback
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || defaultAppletConfig.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || defaultAppletConfig.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || defaultAppletConfig.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || defaultAppletConfig.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultAppletConfig.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || defaultAppletConfig.appId,
 };
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Use specified custom database ID if provided in env, else default Firestore instance
-const customDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
+// Use specified custom database ID if provided in env or config
+const customDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || defaultAppletConfig.firestoreDatabaseId;
 export const db = customDatabaseId
   ? getFirestore(app, customDatabaseId)
   : getFirestore(app);
@@ -164,4 +174,11 @@ export async function seedCategoriesIfEmpty(): Promise<boolean> {
   }
 }
 
-export { signInWithPopup, signOut };
+export {
+  signInWithPopup,
+  signOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updatePassword,
+  updateProfile
+};

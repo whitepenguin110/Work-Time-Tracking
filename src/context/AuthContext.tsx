@@ -1,19 +1,26 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { User, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import {
+  User,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updatePassword,
+  updateProfile
+} from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import {
   auth,
   db,
   googleProvider,
-  signInWithPopup,
-  signOut,
   handleFirestoreError,
   OperationType,
   testConnection,
   seedCategoriesIfEmpty
 } from '../services/firebase';
 import { UserProfile, Department, UserRole } from '../types';
-import { INITIAL_ADMIN_EMAILS } from '../config/admins';
+import { isFixedAdminEmail } from '../config/admins';
 
 interface AuthContextType {
   user: User | null;
@@ -22,6 +29,10 @@ interface AuthContextType {
   needsRegistration: boolean;
   isAdmin: boolean;
   signInWithGoogle: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<void>;
+  signUpWithEmail: (name: string, email: string, password: string, department: Department) => Promise<void>;
+  changePassword: (newPassword: string) => Promise<void>;
+  updateUserName: (newName: string) => Promise<void>;
   signOutUser: () => Promise<void>;
   registerProfile: (name: string, department: Department) => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -34,6 +45,10 @@ const AuthContext = createContext<AuthContextType>({
   needsRegistration: false,
   isAdmin: false,
   signInWithGoogle: async () => {},
+  signInWithEmail: async () => {},
+  signUpWithEmail: async () => {},
+  changePassword: async () => {},
+  updateUserName: async () => {},
   signOutUser: async () => {},
   registerProfile: async () => {},
   refreshProfile: async () => {},
@@ -46,7 +61,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState<boolean>(true);
   const [needsRegistration, setNeedsRegistration] = useState<boolean>(false);
 
-  // Run initial connection test on boot
   useEffect(() => {
     testConnection();
   }, []);
@@ -54,37 +68,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchProfileAndAdminStatus = useCallback(async (firebaseUser: User) => {
     const userDocRef = doc(db, 'users', firebaseUser.uid);
     const email = (firebaseUser.email || '').toLowerCase().trim();
-    const adminDocRef = doc(db, 'admins', email);
+    const isFixedAdmin = isFixedAdminEmail(email);
+
+    setIsAdmin(isFixedAdmin);
 
     try {
-      const [userSnap, adminSnap] = await Promise.all([
-        getDoc(userDocRef),
-        getDoc(adminDocRef).catch(() => null), // Non-admins might get permission-denied reading /admins
-      ]);
-
-      const isBootstrapEmail = INITIAL_ADMIN_EMAILS.some((e) => e.toLowerCase().trim() === email);
-      const isActualAdmin = adminSnap?.exists() || isBootstrapEmail;
-      setIsAdmin(Boolean(isActualAdmin));
+      const userSnap = await getDoc(userDocRef);
 
       if (userSnap.exists()) {
         const data = userSnap.data() as UserProfile;
+        const finalRole: UserRole = isFixedAdmin ? 'admin' : 'user';
         setProfile({
           ...data,
           id: userSnap.id,
-          role: isActualAdmin ? 'admin' : (data.role || 'user'),
+          role: finalRole,
         });
         setNeedsRegistration(false);
 
-        // If bootstrap admin and admin doc doesn't exist yet, seed it
-        if (isBootstrapEmail && (!adminSnap || !adminSnap.exists())) {
+        // Ensure admin document exists in /admins/{email} for security rules
+        if (isFixedAdmin) {
           try {
-            await setDoc(adminDocRef, {
-              email,
-              active: true,
-              createdAt: new Date().toISOString(),
-            }, { merge: true });
+            await setDoc(
+              doc(db, 'admins', email),
+              {
+                email,
+                active: true,
+                createdAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
           } catch {
-            // Silently ignore if already restricted
+            // Silently ignore
           }
         }
       } else {
@@ -113,17 +127,109 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, [fetchProfileAndAdminStatus]);
 
+  // 1. Google Sign In
   const signInWithGoogle = async () => {
     try {
       setLoading(true);
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
-      console.error('Sign in failed:', error);
+      console.error('Google sign in failed:', error);
       setLoading(false);
       throw error;
     }
   };
 
+  // 2. Email & Password Sign In
+  const signInWithEmail = async (email: string, password: string) => {
+    try {
+      setLoading(true);
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (error) {
+      console.error('Email sign in failed:', error);
+      setLoading(false);
+      throw error;
+    }
+  };
+
+  // 3. Email & Password Sign Up (with Name & Department directly)
+  const signUpWithEmail = async (
+    name: string,
+    email: string,
+    password: string,
+    department: Department
+  ) => {
+    try {
+      setLoading(true);
+      const userCred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      const newUser = userCred.user;
+
+      // Update Firebase Auth display name
+      await updateProfile(newUser, { displayName: name.trim() });
+
+      const normalizedEmail = email.toLowerCase().trim();
+      const isFixedAdmin = isFixedAdminEmail(normalizedEmail);
+      const role: UserRole = isFixedAdmin ? 'admin' : 'user';
+
+      const newProfile: UserProfile = {
+        id: newUser.uid,
+        name: name.trim(),
+        email: normalizedEmail,
+        department,
+        role,
+        active: true,
+        createdAt: new Date().toISOString(),
+      };
+
+      await setDoc(doc(db, 'users', newUser.uid), newProfile);
+
+      if (isFixedAdmin) {
+        try {
+          await setDoc(
+            doc(db, 'admins', normalizedEmail),
+            {
+              email: normalizedEmail,
+              active: true,
+              createdAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch {
+          // Ignore
+        }
+      }
+
+      setProfile(newProfile);
+      setIsAdmin(isFixedAdmin);
+      setNeedsRegistration(false);
+
+      if (isFixedAdmin) {
+        seedCategoriesIfEmpty();
+      }
+    } catch (error) {
+      console.error('Email registration failed:', error);
+      setLoading(false);
+      throw error;
+    }
+  };
+
+  // 4. Change Password (for logged in user)
+  const changePassword = async (newPassword: string) => {
+    if (!auth.currentUser) throw new Error('ব্যবহারকারী লগইন করা নেই।');
+    await updatePassword(auth.currentUser, newPassword);
+  };
+
+  // 5. Update Profile Name
+  const updateUserName = async (newName: string) => {
+    if (!auth.currentUser || !profile) throw new Error('ব্যবহারকারী লগইন করা নেই।');
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error('নাম খালি রাখা যাবে না।');
+
+    await updateProfile(auth.currentUser, { displayName: trimmed });
+    await updateDoc(doc(db, 'users', profile.id), { name: trimmed });
+    setProfile({ ...profile, name: trimmed });
+  };
+
+  // 6. Sign Out
   const signOutUser = async () => {
     try {
       await signOut(auth);
@@ -137,21 +243,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // 7. Complete Registration (for first-time Google sign-ins)
   const registerProfile = async (name: string, department: Department) => {
     if (!user) throw new Error('ব্যবহারকারী লগইন করা নেই।');
 
     const normalizedEmail = (user.email || '').toLowerCase().trim();
-    const isInitialAdmin = INITIAL_ADMIN_EMAILS.some(
-      (email) => email.toLowerCase().trim() === normalizedEmail
-    );
-    const role: UserRole = isInitialAdmin ? 'admin' : 'user';
+    const isFixedAdmin = isFixedAdminEmail(normalizedEmail);
+    const role: UserRole = isFixedAdmin ? 'admin' : 'user';
 
     const newProfile: UserProfile = {
       id: user.uid,
       name: name.trim() || user.displayName || 'নামহীন',
       email: normalizedEmail,
       department,
-      role: 'user', // strictly conforms to security rules requirement: on create role must be 'user'
+      role,
       active: true,
       createdAt: new Date().toISOString(),
     };
@@ -160,16 +265,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await setDoc(userDocRef, newProfile);
 
-      // If initial admin, create admins document
-      if (isInitialAdmin) {
+      if (isFixedAdmin) {
         try {
-          await setDoc(doc(db, 'admins', normalizedEmail), {
-            email: normalizedEmail,
-            active: true,
-            createdAt: new Date().toISOString(),
-          }, { merge: true });
+          await setDoc(
+            doc(db, 'admins', normalizedEmail),
+            {
+              email: normalizedEmail,
+              active: true,
+              createdAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
           setIsAdmin(true);
-          newProfile.role = 'admin';
         } catch (e) {
           console.warn('Admin doc creation deferred:', e);
         }
@@ -178,7 +285,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setProfile(newProfile);
       setNeedsRegistration(false);
 
-      if (isInitialAdmin) {
+      if (isFixedAdmin) {
         seedCategoriesIfEmpty();
       }
     } catch (err) {
@@ -202,6 +309,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         needsRegistration,
         isAdmin,
         signInWithGoogle,
+        signInWithEmail,
+        signUpWithEmail,
+        changePassword,
+        updateUserName,
         signOutUser,
         registerProfile,
         refreshProfile,

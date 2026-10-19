@@ -68,7 +68,7 @@ export const AdminReports: React.FC = () => {
     });
 
     tasks.forEach((t) => {
-      if (t.status === 'completed') {
+      if (t.status === 'completed' && t.approvalStatus === 'approved') {
         const refDate = t.submitDate || t.workDate || '';
         if (refDate.startsWith(selectedMonth)) {
           if (!userSummaryMap[t.ownerUid]) {

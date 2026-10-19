@@ -8,16 +8,32 @@ import {
   TrendingUp,
   AlertCircle,
   LogIn,
-  UserPlus
+  UserPlus,
+  Mail,
+  Lock,
+  User,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { Department } from '../types';
 
 export const LoginScreen: React.FC = () => {
-  const { signInWithGoogle } = useAuth();
+  const { signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authMethod, setAuthMethod] = useState<'google' | 'email'>('google');
+
+  // Email form state
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [department, setDepartment] = useState<Department>('graphic');
+  const [showPassword, setShowPassword] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // 1. Google Auth Handler
   const handleGoogleAuth = async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -31,23 +47,68 @@ export const LoginScreen: React.FC = () => {
     }
   };
 
+  // 2. Email Sign In / Sign Up Handler
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+
+    if (!email.trim() || !password) {
+      setErrorMsg('ইমেইল ও পাসওয়ার্ড পূরণ করুন।');
+      return;
+    }
+
+    if (authMode === 'signup') {
+      if (!name.trim()) {
+        setErrorMsg('আপনার পুরো নাম লিখুন।');
+        return;
+      }
+      if (password.length < 6) {
+        setErrorMsg('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
+        return;
+      }
+    }
+
+    setLoading(true);
+    try {
+      if (authMode === 'signin') {
+        await signInWithEmail(email, password);
+      } else {
+        await signUpWithEmail(name, email, password, department);
+      }
+    } catch (err: unknown) {
+      console.error(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      if (raw.includes('user-not-found') || raw.includes('wrong-password') || raw.includes('invalid-credential')) {
+        setErrorMsg('ইমেইল বা পাসওয়ার্ড সঠিক নয়।');
+      } else if (raw.includes('email-already-in-use')) {
+        setErrorMsg('এই ইমেইলটি দিয়ে ইতিমধ্যে অ্যাকাউন্ট রয়েছে। সাইন-ইন করুন।');
+      } else if (raw.includes('weak-password')) {
+        setErrorMsg('পাসওয়ার্ড খুবই দুর্বল। কমপক্ষে ৬ অক্ষরের মজবুত পাসওয়ার্ড দিন।');
+      } else {
+        setErrorMsg('লগইন প্রক্রিয়া ব্যর্থ হয়েছে। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-[85vh] flex flex-col justify-center items-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md space-y-6 bg-white dark:bg-slate-900 p-8 sm:p-10 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 text-center relative overflow-hidden">
+      <div className="w-full max-w-md space-y-5 bg-white dark:bg-slate-900 p-8 sm:p-10 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 text-center relative overflow-hidden">
         {/* Glow decorative shape */}
         <div className="absolute -top-16 -right-16 w-36 h-36 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
         <div className="absolute -bottom-16 -left-16 w-36 h-36 bg-teal-500/10 rounded-full blur-2xl pointer-events-none" />
 
         {/* Brand Icon */}
-        <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/30">
-          <CheckSquare className="w-9 h-9 stroke-[2.5]" />
+        <div className="mx-auto w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/30">
+          <CheckSquare className="w-8 h-8 stroke-[2.5]" />
         </div>
 
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
             কাজের হিসাব
           </h1>
-          <p className="mt-1.5 text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             গ্রাফিক ডিজাইনার ও ভিডিও এডিটরদের কাজ ও ইনসেনটিভ প্ল্যাটফর্ম
           </p>
         </div>
@@ -60,14 +121,14 @@ export const LoginScreen: React.FC = () => {
               setAuthMode('signin');
               setErrorMsg(null);
             }}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition ${
+            className={`flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition ${
               authMode === 'signin'
                 ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             <LogIn className="w-3.5 h-3.5" />
-            <span>সাইন-ইন (Sign In)</span>
+            <span>সাইন-ইন</span>
           </button>
 
           <button
@@ -76,58 +137,33 @@ export const LoginScreen: React.FC = () => {
               setAuthMode('signup');
               setErrorMsg(null);
             }}
-            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition ${
+            className={`flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition ${
               authMode === 'signup'
                 ? 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             <UserPlus className="w-3.5 h-3.5" />
-            <span>সাইন-আপ (Sign Up)</span>
+            <span>নতুন রেজিস্ট্রেশন</span>
           </button>
         </div>
 
         {errorMsg && (
-          <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-xs rounded-xl flex items-center gap-2">
+          <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-300 text-xs rounded-xl flex items-center gap-2 text-left">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
-        {/* Mode Specific Description & Action Button */}
-        <div className="space-y-4 pt-1">
-          {authMode === 'signin' ? (
-            <div className="text-left bg-slate-50 dark:bg-slate-800/40 p-3.5 rounded-2xl border border-slate-200/60 dark:border-slate-800/60">
-              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                পূর্বের অ্যাকাউন্টে লগইন
-              </p>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                আপনার কাজের তালিকা ও ইনসেনটিভ দেখতে আপনার নিবন্ধিত গুগল অ্যাকাউন্ট দিয়ে প্রবেশ করুন।
-              </p>
-            </div>
-          ) : (
-            <div className="text-left bg-emerald-50/70 dark:bg-emerald-950/30 p-3.5 rounded-2xl border border-emerald-200/60 dark:border-emerald-800/60">
-              <p className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
-                নতুন সদস্য নিবন্ধন
-              </p>
-              <p className="text-[11px] text-emerald-700/90 dark:text-emerald-300/80 mt-0.5">
-                গুগল দিয়ে সাইন-আপ করার পর আপনার নাম ও বিভাগ (গ্রাফিক ডিজাইন বা ভিডিও এডিটিং) বেছে নিতে পারবেন।
-              </p>
-            </div>
-          )}
-
-          {/* Google Button */}
+        {/* Google Primary Button */}
+        <div className="space-y-3">
           <button
+            type="button"
             onClick={handleGoogleAuth}
             disabled={loading}
-            className={`w-full flex items-center justify-center gap-3 px-5 py-3.5 rounded-2xl border text-sm font-semibold shadow-sm hover:shadow transition active:scale-[0.99] disabled:opacity-50 ${
-              authMode === 'signup'
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-emerald-600/20'
-                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200'
-            }`}
+            className="w-full flex items-center justify-center gap-3 px-5 py-3 rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 text-xs font-semibold shadow-xs hover:shadow transition active:scale-[0.99] disabled:opacity-50"
           >
-            {/* Google SVG */}
-            <div className="p-1 rounded-full bg-white flex items-center justify-center shrink-0">
+            <div className="p-0.5 rounded-full bg-white flex items-center justify-center shrink-0">
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path
                   fill="#4285F4"
@@ -151,89 +187,169 @@ export const LoginScreen: React.FC = () => {
               {loading
                 ? 'সংযোগ করা হচ্ছে...'
                 : authMode === 'signup'
-                ? 'গুগল দিয়ে সাইন-আপ করুন'
-                : 'গুগল দিয়ে সাইন-ইন করুন'}
+                ? 'গুগল দিয়ে সরাসরি সাইন-আপ'
+                : 'গুগল দিয়ে সাইন-ইন'}
             </span>
           </button>
 
-          {/* Bottom Switcher helper */}
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            {authMode === 'signin' ? (
-              <>
-                টিমে নতুন যুক্ত হয়েছেন?{' '}
-                <button
-                  type="button"
-                  onClick={() => setAuthMode('signup')}
-                  className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline"
-                >
-                  এখানে সাইন-আপ করুন
-                </button>
-              </>
-            ) : (
-              <>
-                ইতিমধ্যে একাউন্ট আছে?{' '}
-                <button
-                  type="button"
-                  onClick={() => setAuthMode('signin')}
-                  className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline"
-                >
-                  এখানে সাইন-ইন করুন
-                </button>
-              </>
-            )}
-          </p>
-        </div>
-
-        {/* Feature Badges */}
-        <div className="pt-5 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-2.5 text-left">
-          <div className="flex items-start gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50">
-            <Palette className="w-4 h-4 text-pink-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                গ্রাফিক ডিজাইন
-              </p>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                ২৫+ ক্যাটাগরি সাপোর্ট
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50">
-            <Video className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                ভিডিও এডিটিং
-              </p>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                ১৫+ ক্যাটাগরি ও শুট
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50">
-            <TrendingUp className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                ইনস্ট্যান্ট ইনসেনটিভ
-              </p>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                কাজের সাথে সাথে হিসাব
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2 p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50">
-            <ShieldCheck className="w-4 h-4 text-purple-500 shrink-0 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                নিরাপদ ডেটাবেস
-              </p>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">
-                ব্যক্তিগত গোপনীয়তা নিশ্চিত
-              </p>
-            </div>
+          <div className="relative flex items-center justify-center my-3">
+            <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
+            <span className="bg-white dark:bg-slate-900 px-3 text-[11px] text-slate-400 absolute">
+              অথবা ইমেইল ও পাসওয়ার্ড
+            </span>
           </div>
         </div>
+
+        {/* Email & Password Form */}
+        <form onSubmit={handleEmailAuth} className="space-y-3 text-left">
+          {/* Sign Up Fields: Name & Department */}
+          {authMode === 'signup' && (
+            <>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  আপনার পুরো নাম
+                </label>
+                <div className="relative">
+                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="যেমন: মোঃ আব্দুল্লাহ"
+                    required
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  কাজের বিভাগ নির্বাচন করুন
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDepartment('graphic')}
+                    className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+                      department === 'graphic'
+                        ? 'border-pink-500 bg-pink-50 dark:bg-pink-950/40 text-pink-700 dark:text-pink-300 ring-1 ring-pink-500'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    <Palette className="w-3.5 h-3.5 text-pink-500" />
+                    <span>গ্রাফিক ডিজাইন</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDepartment('video')}
+                    className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
+                      department === 'video'
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 ring-1 ring-blue-500'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    <Video className="w-3.5 h-3.5 text-blue-500" />
+                    <span>ভিডিও এডিটিং</span>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Email input */}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+              ইমেইল অ্যাড্রেস
+            </label>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@gmail.com"
+                required
+                className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Password input */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                লগইন পাসওয়ার্ড
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 flex items-center gap-1"
+              >
+                {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {showPassword ? 'লুকান' : 'দেখুন'}
+              </button>
+            </div>
+            <div className="relative">
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                minLength={6}
+                className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Submit button */}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-md shadow-emerald-600/20 transition active:scale-[0.99] disabled:opacity-50 mt-2"
+          >
+            {loading
+              ? 'প্রক্রিয়াকরণ হচ্ছে...'
+              : authMode === 'signup'
+              ? 'রেজিস্ট্রেশন সম্পন্ন করুন'
+              : 'লগইন করুন'}
+          </button>
+        </form>
+
+        {/* Bottom Switcher */}
+        <p className="text-xs text-slate-500 dark:text-slate-400 pt-2">
+          {authMode === 'signin' ? (
+            <>
+              টিমে নতুন যুক্ত হয়েছেন?{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('signup');
+                  setErrorMsg(null);
+                }}
+                className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline"
+              >
+                এখানে সাইন-আপ করুন
+              </button>
+            </>
+          ) : (
+            <>
+              ইতিমধ্যে অ্যাকাউন্ট আছে?{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode('signin');
+                  setErrorMsg(null);
+                }}
+                className="text-emerald-600 dark:text-emerald-400 font-semibold hover:underline"
+              >
+                এখানে সাইন-ইন করুন
+              </button>
+            </>
+          )}
+        </p>
       </div>
     </div>
   );

@@ -151,3 +151,64 @@ export function downloadCSV(filename: string, headers: string[], rows: (string |
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
+
+export type ReportPeriod = '1_month' | '2_months' | '3_months' | '5_months' | '1_year' | 'all' | 'custom';
+
+/**
+ * Returns date range (startDate, endDate) and Bengali label for standard report periods
+ */
+export function getPeriodDateRange(
+  period: ReportPeriod,
+  customStart?: string,
+  customEnd?: string
+): { startDate: string; endDate: string; label: string } {
+  const today = new Date();
+  const endDate = today.toISOString().split('T')[0];
+
+  if (period === 'all') {
+    return { startDate: '1970-01-01', endDate, label: 'সব সময়ের কাজের রিপোর্ট' };
+  }
+
+  if (period === 'custom') {
+    const s = customStart || endDate;
+    const e = customEnd || endDate;
+    return {
+      startDate: s,
+      endDate: e,
+      label: `কাস্টম তারিখ সীমা: ${formatBengaliDate(s)} থেকে ${formatBengaliDate(e)}`
+    };
+  }
+
+  const d = new Date(today);
+  let monthsBack = 1;
+  let label = 'বিগত ১ মাসের রিপোর্ট';
+
+  switch (period) {
+    case '1_month':
+      monthsBack = 1;
+      label = '১ মাসের রিপোর্ট (বিগত ১ মাস)';
+      break;
+    case '2_months':
+      monthsBack = 2;
+      label = '২ মাসের রিপোর্ট (বিগত ২ মাস)';
+      break;
+    case '3_months':
+      monthsBack = 3;
+      label = '৩ মাসের রিপোর্ট (বিগত ৩ মাস / কোয়ার্টার)';
+      break;
+    case '5_months':
+      monthsBack = 5;
+      label = '৫ মাসের রিপোর্ট (একসাথে বিগত ৫ মাস)';
+      break;
+    case '1_year':
+      monthsBack = 12;
+      label = 'গোটা বছরের রিপোর্ট (বিগত ১২ মাস / ১ বছর)';
+      break;
+    default:
+      monthsBack = 1;
+  }
+
+  d.setMonth(d.getMonth() - monthsBack);
+  const startDate = d.toISOString().split('T')[0];
+  return { startDate, endDate, label };
+}

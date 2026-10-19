@@ -9,11 +9,11 @@ service cloud.firestore {
 
     // Authentication helpers
     function isSignedIn() {
-      return request.auth != null && request.auth.token.email_verified == true;
+      return request.auth != null && request.auth.token.email != null;
     }
 
-    // Three bootstrap admin emails
-    function isBootstrappedAdmin() {
+    // Only these exact 3 emails can ever be Admin
+    function isFixedAdmin() {
       return isSignedIn() && (
         request.auth.token.email == 'itvdrive84@gmail.com' ||
         request.auth.token.email == 'itisamgfx@gmail.com' ||
@@ -21,13 +21,8 @@ service cloud.firestore {
       );
     }
 
-    // Admin verification: document in /admins/{email} OR in bootstrap list
     function isAdmin() {
-      return isSignedIn() && (
-        isBootstrappedAdmin() ||
-        (request.auth.token.email != null &&
-         exists(/databases/$(database)/documents/admins/$(request.auth.token.email)))
-      );
+      return isFixedAdmin();
     }
 
     function isOwner(userId) {
@@ -37,20 +32,22 @@ service cloud.firestore {
     // 1. Users collection: users/{uid}
     match /users/{userId} {
       allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
-      allow list: if isSignedIn() && isAdmin();
+      allow list: if isSignedIn(); // allow all signed in users to see active team members for assignment
 
-      // On create: Only the owner can create their profile.
+      // On create:
+      // Only the 3 fixed emails can receive the 'admin' role; all other profiles must be 'user'
       allow create: if isOwner(userId) &&
         request.resource.data.keys().hasAll(['name', 'email', 'department', 'role', 'active']) &&
         request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
         request.resource.data.email is string && request.resource.data.email == request.auth.token.email &&
         request.resource.data.department in ['graphic', 'video'] &&
-        (request.resource.data.role == 'user' || (isBootstrappedAdmin() && request.resource.data.role == 'admin')) &&
+        ((isFixedAdmin() && request.resource.data.role in ['admin', 'user']) ||
+         (!isFixedAdmin() && request.resource.data.role == 'user')) &&
         request.resource.data.active == true;
 
       // On update:
-      // Regular user can ONLY update their own name (cannot change role, active, or department)
-      // Admins can update department, active status, and role
+      // Regular user can ONLY update their own name
+      // Admins can update department and active status
       allow update: if isSignedIn() && (
         (isOwner(userId) &&
          request.resource.data.email == resource.data.email &&
@@ -60,7 +57,7 @@ service cloud.firestore {
          request.resource.data.name is string && request.resource.data.name.size() > 0) ||
         (isAdmin() &&
          request.resource.data.email == resource.data.email &&
-         request.resource.data.role in ['admin', 'user'] &&
+         ((resource.data.email in ['itvdrive84@gmail.com', 'itisamgfx@gmail.com', 'whitepenguin110@gmail.com']) || request.resource.data.role == 'user') &&
          request.resource.data.department in ['graphic', 'video'] &&
          request.resource.data.active is bool)
       );
@@ -76,29 +73,45 @@ service cloud.firestore {
 
     // 3. Tasks collection: tasks/{id}
     match /tasks/{taskId} {
-      allow get, list: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      // Admins can read all tasks. Members can only read tasks assigned to them.
+      allow get, list: if isSignedIn() && (
+        isAdmin() ||
+        resource.data.assignedToUid == request.auth.uid ||
+        resource.data.ownerUid == request.auth.uid
+      );
 
-      allow create: if isSignedIn() &&
-        request.resource.data.ownerUid == request.auth.uid &&
-        request.resource.data.name is string && request.resource.data.name.size() > 0 &&
-        request.resource.data.department in ['graphic', 'video'] &&
-        request.resource.data.status in ['pending', 'in_progress', 'completed'];
+      // Admin can create tasks and assign them to any designer/editor.
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        (request.resource.data.assignedToUid == request.auth.uid &&
+         request.resource.data.ownerUid == request.auth.uid)
+      );
 
-      // Owner can update their own task; admins CANNOT edit
-      allow update: if isSignedIn() &&
-        resource.data.ownerUid == request.auth.uid &&
-        request.resource.data.ownerUid == resource.data.ownerUid &&
-        request.resource.data.name is string && request.resource.data.name.size() > 0 &&
-        request.resource.data.status in ['pending', 'in_progress', 'completed'];
+      // Updates:
+      // 1) Admins can update any field (including approving tasks, setting approvedByEmail, etc.)
+      // 2) Assigned members can ONLY update status ('pending', 'in_progress', 'completed'), approvalStatus, submitDate, and note.
+      // Members cannot self-approve or alter assignedToUid, ownerUid, name, department, categoryId, or incentiveAmount.
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        ((resource.data.assignedToUid == request.auth.uid || resource.data.ownerUid == request.auth.uid) &&
+         request.resource.data.assignedToUid == resource.data.assignedToUid &&
+         request.resource.data.ownerUid == resource.data.ownerUid &&
+         request.resource.data.name == resource.data.name &&
+         request.resource.data.department == resource.data.department &&
+         request.resource.data.categoryId == resource.data.categoryId &&
+         request.resource.data.incentiveAmount == resource.data.incentiveAmount &&
+         request.resource.data.status in ['pending', 'in_progress', 'completed'] &&
+         request.resource.data.approvalStatus in ['not_submitted', 'pending_approval', resource.data.approvalStatus])
+      );
 
-      // Owner can delete their own task; admins CANNOT delete
-      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      // Only admins can delete tasks
+      allow delete: if isAdmin();
     }
 
     // 4. Admins collection: admins/{email}
     match /admins/{email} {
       allow read: if isAdmin();
-      allow write: if isAdmin();
+      allow write: if isFixedAdmin();
     }
   }
 }

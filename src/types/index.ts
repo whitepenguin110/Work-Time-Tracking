@@ -1,6 +1,7 @@
 export type Department = 'graphic' | 'video';
 export type UserRole = 'admin' | 'user';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+export type ApprovalStatus = 'not_submitted' | 'pending_approval' | 'approved' | 'rejected';
 
 export interface UserProfile {
   id: string; // Firebase Auth UID
@@ -23,18 +24,30 @@ export interface Category {
 
 export interface Task {
   id: string;
-  ownerUid: string;
+  ownerUid: string; // Assigned member UID (for backward compatibility & query safety)
+  assignedToUid: string;
+  assignedToName: string;
+  assignedToEmail: string;
+  createdByUid?: string;
+  createdByName?: string;
+  createdByEmail?: string;
   name: string;
   categoryId: string;
   categoryName: string;
   department: Department;
   workDate: string; // YYYY-MM-DD
   dueDate: string;  // YYYY-MM-DD
-  status: TaskStatus;
-  submitDate?: string; // YYYY-MM-DD (set when completed)
-  incentiveAmount: number; // Locked amount in BDT when completed
+  status: TaskStatus; // 'pending' | 'in_progress' | 'completed'
+  submitDate?: string; // YYYY-MM-DD (set when marked completed)
+  incentiveAmount: number; // Locked amount in BDT
   note?: string;
+  approvalStatus: ApprovalStatus;
+  approvedByEmail?: string; // কোন অ্যাডমিন অনুমোদন করেছে
+  approvedByName?: string;
+  approvedAt?: string; // অনুমোদনের সময়কাল
+  rejectionReason?: string;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DepartmentInfo {
