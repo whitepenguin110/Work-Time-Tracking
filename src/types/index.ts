@@ -2,6 +2,7 @@ export type Department = 'graphic' | 'video';
 export type UserRole = 'admin' | 'user';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
 export type ApprovalStatus = 'not_submitted' | 'pending_approval' | 'approved' | 'rejected';
+export type MemberApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export interface UserProfile {
   id: string; // Firebase Auth UID
@@ -10,6 +11,15 @@ export interface UserProfile {
   department: Department;
   role: UserRole;
   active: boolean;
+  approvalStatus?: MemberApprovalStatus; // 'pending' | 'approved' | 'rejected'
+  approvedAt?: string;
+  approvedBy?: string;
+  rejectedReason?: string;
+  archived?: boolean; // soft-delete status
+  archivedAt?: string;
+  archivedBy?: string;
+  archivedReason?: string;
+  restoredAt?: string;
   createdAt: string;
 }
 

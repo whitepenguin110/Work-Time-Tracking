@@ -12,6 +12,7 @@ import { Navbar, AdminViewTab } from './components/Navbar';
 import { LoginScreen } from './components/LoginScreen';
 import { RegistrationModal } from './components/RegistrationModal';
 import { InactiveAccountScreen } from './components/InactiveAccountScreen';
+import { PendingApprovalScreen } from './components/PendingApprovalScreen';
 import { UserDashboard } from './components/UserDashboard';
 import { AdminApprovals } from './components/AdminApprovals';
 import { AdminAllTasksReport } from './components/AdminAllTasksReport';
@@ -25,6 +26,7 @@ const AppContent: React.FC = () => {
   const { user, profile, loading, needsRegistration, isAdmin } = useAuth();
   const [adminTab, setAdminTab] = useState<AdminViewTab>('approvals');
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
+  const [pendingMemberApprovalsCount, setPendingMemberApprovalsCount] = useState<number>(0);
 
   // Real-time counter of tasks awaiting admin approval
   useEffect(() => {
@@ -38,6 +40,23 @@ const AppContent: React.FC = () => {
       q,
       (snap) => {
         setPendingApprovalsCount(snap.size);
+      },
+      () => {}
+    );
+    return () => unsub();
+  }, [isAdmin]);
+
+  // Real-time counter of new member registrations awaiting admin approval
+  useEffect(() => {
+    if (!isAdmin) return;
+    const q = query(
+      collection(db, 'users'),
+      where('approvalStatus', '==', 'pending')
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setPendingMemberApprovalsCount(snap.size);
       },
       () => {}
     );
@@ -78,14 +97,63 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // If account is deactivated by admin
-  if (profile && !profile.active) {
-    return (
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-        <Navbar currentTab={adminTab} onTabChange={setAdminTab} />
-        <InactiveAccountScreen />
-      </div>
-    );
+  // Security & Access Control for regular members (must be approved by admin)
+  if (!isAdmin && profile) {
+    // 1. Pending Approval by Admin
+    if (profile.approvalStatus === 'pending') {
+      return (
+        <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-between">
+          <div className="flex-1 flex items-center justify-center">
+            <PendingApprovalScreen />
+          </div>
+          <footer className="py-4 text-center text-xs text-slate-400 dark:text-slate-600 border-t border-slate-200 dark:border-slate-800/60">
+            কাজের হিসাব — টিম ম্যানেজমেন্ট সিস্টেম
+          </footer>
+        </div>
+      );
+    }
+
+    // 2. Rejected by Admin
+    if (profile.approvalStatus === 'rejected') {
+      return (
+        <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-between">
+          <div className="flex-1 flex items-center justify-center">
+            <PendingApprovalScreen isRejected rejectionReason={profile.rejectedReason} />
+          </div>
+          <footer className="py-4 text-center text-xs text-slate-400 dark:text-slate-600 border-t border-slate-200 dark:border-slate-800/60">
+            কাজের হিসাব — টিম ম্যানেজমেন্ট সিস্টেম
+          </footer>
+        </div>
+      );
+    }
+
+    // 3. Archived (Soft-deleted) Member
+    if (profile.archived) {
+      return (
+        <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-between">
+          <div className="flex-1 flex items-center justify-center">
+            <InactiveAccountScreen isArchived />
+          </div>
+          <footer className="py-4 text-center text-xs text-slate-400 dark:text-slate-600 border-t border-slate-200 dark:border-slate-800/60">
+            কাজের হিসাব — টিম ম্যানেজমেন্ট সিস্টেম
+          </footer>
+        </div>
+      );
+    }
+
+    // 4. Temporarily Deactivated by Admin
+    if (!profile.active) {
+      return (
+        <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-between">
+          <div className="flex-1 flex items-center justify-center">
+            <InactiveAccountScreen />
+          </div>
+          <footer className="py-4 text-center text-xs text-slate-400 dark:text-slate-600 border-t border-slate-200 dark:border-slate-800/60">
+            কাজের হিসাব — টিম ম্যানেজমেন্ট সিস্টেম
+          </footer>
+        </div>
+      );
+    }
   }
 
   return (
@@ -94,6 +162,7 @@ const AppContent: React.FC = () => {
         currentTab={adminTab}
         onTabChange={setAdminTab}
         pendingApprovalsCount={pendingApprovalsCount}
+        pendingMemberApprovalsCount={pendingMemberApprovalsCount}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">

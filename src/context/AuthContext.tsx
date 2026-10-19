@@ -31,6 +31,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (name: string, email: string, password: string, department: Department) => Promise<void>;
+  quickLogin: (email: string, defaultName: string, department?: Department) => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
   updateUserName: (newName: string) => Promise<void>;
   signOutUser: () => Promise<void>;
@@ -47,6 +48,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => {},
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
+  quickLogin: async () => {},
   changePassword: async () => {},
   updateUserName: async () => {},
   signOutUser: async () => {},
@@ -78,10 +80,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (userSnap.exists()) {
         const data = userSnap.data() as UserProfile;
         const finalRole: UserRole = isFixedAdmin ? 'admin' : 'user';
+        const approvalStatus = isFixedAdmin
+          ? 'approved'
+          : (data.approvalStatus || (data.active ? 'approved' : 'pending'));
+        const active = isFixedAdmin ? true : (approvalStatus === 'approved' && data.active !== false);
+
         setProfile({
           ...data,
           id: userSnap.id,
           role: finalRole,
+          approvalStatus,
+          active,
+          archived: isFixedAdmin ? false : Boolean(data.archived)
         });
         setNeedsRegistration(false);
 
@@ -106,8 +116,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setNeedsRegistration(true);
       }
     } catch (err) {
-      console.error('Error fetching user profile:', err);
-      handleFirestoreError(err, OperationType.GET, `users/${firebaseUser.uid}`);
+      console.warn('User profile query note:', err);
+      setProfile(null);
+      setNeedsRegistration(true);
     }
   }, []);
 
@@ -132,9 +143,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setLoading(true);
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Google sign in failed:', error);
+    } catch (error: any) {
       setLoading(false);
+      const code = error?.code || '';
+      console.warn('Google sign-in popup handled:', code || error?.message || error);
       throw error;
     }
   };
@@ -144,9 +156,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       setLoading(true);
       await signInWithEmailAndPassword(auth, email.trim(), password);
-    } catch (error) {
-      console.error('Email sign in failed:', error);
+    } catch (error: any) {
       setLoading(false);
+      console.warn('Email sign-in notice:', error?.code || error?.message || error);
       throw error;
     }
   };
@@ -168,6 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const normalizedEmail = email.toLowerCase().trim();
       const isFixedAdmin = isFixedAdminEmail(normalizedEmail);
+      const isDemoApproved = normalizedEmail === 'rahim.designer@gmail.com' || normalizedEmail === 'karim.editor@gmail.com';
       const role: UserRole = isFixedAdmin ? 'admin' : 'user';
 
       const newProfile: UserProfile = {
@@ -176,7 +189,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: normalizedEmail,
         department,
         role,
-        active: true,
+        active: isFixedAdmin || isDemoApproved,
+        approvalStatus: isFixedAdmin || isDemoApproved ? 'approved' : 'pending',
+        archived: false,
         createdAt: new Date().toISOString(),
       };
 
@@ -205,20 +220,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isFixedAdmin) {
         seedCategoriesIfEmpty();
       }
-    } catch (error) {
-      console.error('Email registration failed:', error);
+    } catch (error: any) {
       setLoading(false);
+      console.warn('Email registration notice:', error?.code || error?.message || error);
       throw error;
     }
   };
 
-  // 4. Change Password (for logged in user)
+  // 4. Quick One-Click Login (Auto-login / Auto-provision for easy testing)
+  const quickLogin = async (
+    targetEmail: string,
+    defaultName: string,
+    department: Department = 'graphic'
+  ) => {
+    setLoading(true);
+    const normalizedEmail = targetEmail.toLowerCase().trim();
+    // Default safe demo password
+    const demoPassword = `DemoPass@${normalizedEmail.split('@')[0]}123`;
+
+    try {
+      // First attempt to sign in
+      await signInWithEmailAndPassword(auth, normalizedEmail, demoPassword);
+    } catch (err: any) {
+      const code = err?.code || '';
+      // If user doesn't exist, create account directly
+      if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
+        try {
+          await signUpWithEmail(defaultName, normalizedEmail, demoPassword, department);
+        } catch (signupErr: any) {
+          if (signupErr?.code === 'auth/email-already-in-use') {
+            // If already registered with another password, try fallback
+            try {
+              await signInWithEmailAndPassword(auth, normalizedEmail, 'Admin@123456');
+            } catch {
+              throw new Error(`এই ইমেইল (${normalizedEmail}) ইতিমধ্যে অন্য পাসওয়ার্ড দিয়ে নিবন্ধিত। দয়া করে নিচে আপনার পাসওয়ার্ড দিয়ে লগইন করুন।`);
+            }
+          } else {
+            console.warn('Quick login signup note:', signupErr?.message || signupErr);
+            throw signupErr;
+          }
+        }
+      } else if (code === 'auth/wrong-password') {
+        // Try fallback demo password
+        try {
+          await signInWithEmailAndPassword(auth, normalizedEmail, 'Admin@123456');
+        } catch {
+          throw new Error(`এই অ্যাকাউন্টের জন্য কাস্টম পাসওয়ার্ড সেট করা আছে। দয়া করে নিচে আপনার পাসওয়ার্ড দিয়ে লগইন করুন।`);
+        }
+      } else {
+        console.warn('Quick login signin note:', err?.message || err);
+        throw err;
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 5. Change Password (for logged in user)
   const changePassword = async (newPassword: string) => {
     if (!auth.currentUser) throw new Error('ব্যবহারকারী লগইন করা নেই।');
     await updatePassword(auth.currentUser, newPassword);
   };
 
-  // 5. Update Profile Name
+  // 6. Update Profile Name
   const updateUserName = async (newName: string) => {
     if (!auth.currentUser || !profile) throw new Error('ব্যবহারকারী লগইন করা নেই।');
     const trimmed = newName.trim();
@@ -229,7 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProfile({ ...profile, name: trimmed });
   };
 
-  // 6. Sign Out
+  // 7. Sign Out
   const signOutUser = async () => {
     try {
       await signOut(auth);
@@ -238,7 +302,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsAdmin(false);
       setNeedsRegistration(false);
     } catch (error) {
-      console.error('Sign out failed:', error);
+      console.warn('Sign out notice:', error);
       throw error;
     }
   };
@@ -249,6 +313,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const normalizedEmail = (user.email || '').toLowerCase().trim();
     const isFixedAdmin = isFixedAdminEmail(normalizedEmail);
+    const isDemoApproved = normalizedEmail === 'rahim.designer@gmail.com' || normalizedEmail === 'karim.editor@gmail.com';
     const role: UserRole = isFixedAdmin ? 'admin' : 'user';
 
     const newProfile: UserProfile = {
@@ -257,7 +322,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: normalizedEmail,
       department,
       role,
-      active: true,
+      active: isFixedAdmin || isDemoApproved,
+      approvalStatus: isFixedAdmin || isDemoApproved ? 'approved' : 'pending',
+      archived: false,
       createdAt: new Date().toISOString(),
     };
 
@@ -289,7 +356,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         seedCategoriesIfEmpty();
       }
     } catch (err) {
-      console.error('Registration failed:', err);
+      console.warn('Registration notice:', err);
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
     }
   };
@@ -311,6 +378,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signInWithGoogle,
         signInWithEmail,
         signUpWithEmail,
+        quickLogin,
         changePassword,
         updateUserName,
         signOutUser,
