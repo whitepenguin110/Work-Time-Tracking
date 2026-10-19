@@ -3,35 +3,38 @@ import {
   collection,
   onSnapshot,
   doc,
-  updateDoc
+  updateDoc,
+  setDoc,
+  deleteDoc,
+  getDocs
 } from 'firebase/firestore';
 import {
   Users,
   Shield,
   ShieldAlert,
-  ShieldCheck,
   Palette,
   Video,
   UserCheck,
   UserX,
   AlertTriangle,
   Mail,
-  Calendar,
   Check
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../services/firebase';
-import { UserProfile, Department, UserRole, DEPARTMENTS } from '../types';
+import { UserProfile, Department, UserRole } from '../types';
 import { MAX_ADMINS } from '../config/admins';
 import { toBengaliNumber, formatBengaliDate } from '../utils/bengali';
 
 export const AdminUsers: React.FC = () => {
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [adminEmails, setAdminEmails] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // 1. Listen to users collection
   useEffect(() => {
-    const unsub = onSnapshot(
+    const unsubUsers = onSnapshot(
       collection(db, 'users'),
       (snapshot) => {
         const list: UserProfile[] = [];
@@ -46,10 +49,29 @@ export const AdminUsers: React.FC = () => {
         setLoading(false);
       }
     );
-    return () => unsub();
+
+    // 2. Listen to admins collection
+    const unsubAdmins = onSnapshot(
+      collection(db, 'admins'),
+      (snapshot) => {
+        const emails: string[] = [];
+        snapshot.forEach((d) => {
+          emails.push(d.id.toLowerCase().trim());
+        });
+        setAdminEmails(emails);
+      },
+      () => {
+        // May be restricted for non-admins
+      }
+    );
+
+    return () => {
+      unsubUsers();
+      unsubAdmins();
+    };
   }, []);
 
-  const currentAdminCount = users.filter((u) => u.role === 'admin' && u.active).length;
+  const currentAdminCount = adminEmails.length || users.filter((u) => u.role === 'admin' && u.active).length;
 
   const showFeedback = (type: 'success' | 'error', text: string) => {
     setFeedbackMsg({ type, text });
@@ -97,49 +119,75 @@ export const AdminUsers: React.FC = () => {
     }
   };
 
-  // Toggle admin role (STRICT MAX 2 ADMINS ENFORCED)
+  // Toggle admin role (STRICT MAX 2 ADMINS ENFORCED via /admins/{email})
   const handleToggleAdminRole = async (user: UserProfile) => {
-    const isCurrentlyAdmin = user.role === 'admin';
-
-    if (!isCurrentlyAdmin) {
-      // Promoting to Admin: Check if already at MAX_ADMINS
-      if (currentAdminCount >= MAX_ADMINS) {
-        showFeedback(
-          'error',
-          `সর্বোচ্চ ২ জন অ্যাডমিন থাকতে পারে। নতুন কাউকে অ্যাডমিন করতে চাইলে বর্তমান ২ জনের মধ্যে একজনকে সদস্য হিসেবে নামিয়ে দিতে হবে।`
-        );
-        return;
-      }
-      if (!window.confirm(`আপনি কি "${user.name}"-কে অ্যাডমিন হিসেবে পদোন্নতি দিতে চান?`)) {
-        return;
-      }
-    } else {
-      // Demoting from Admin: Ensure at least 1 admin remains
-      if (currentAdminCount <= 1) {
-        showFeedback('error', 'সিস্টেমে অন্তত ১ জন অ্যাডমিন আবশ্যক।');
-        return;
-      }
-      if (
-        !window.confirm(
-          `আপনি কি "${user.name}"-এর অ্যাডমিন ক্ষমতা বাতিল করে সাধারণ সদস্য করতে চান?`
-        )
-      ) {
-        return;
-      }
-    }
+    const userEmail = (user.email || '').toLowerCase().trim();
+    const isCurrentlyAdmin = adminEmails.includes(userEmail) || user.role === 'admin';
 
     setUpdatingId(user.id);
-    const newRole: UserRole = isCurrentlyAdmin ? 'user' : 'admin';
+
     try {
-      const userRef = doc(db, 'users', user.id);
-      await updateDoc(userRef, { role: newRole });
-      showFeedback(
-        'success',
-        `${user.name}-এর পদবি সফলভাবে পরিবর্তন করা হয়েছে।`
-      );
+      // Re-fetch current admins collection to avoid race conditions
+      const adminCol = collection(db, 'admins');
+      const snap = await getDocs(adminCol);
+      const currentAdmins = snap.docs.map((d) => d.id.toLowerCase().trim());
+
+      if (!isCurrentlyAdmin) {
+        // Promoting to Admin: Check if already at MAX_ADMINS (2)
+        if (currentAdmins.length >= MAX_ADMINS) {
+          showFeedback(
+            'error',
+            `সর্বোচ্চ ${toBengaliNumber(MAX_ADMINS)} জন অ্যাডমিন অনুমোদিত। নতুন কাউকে অ্যাডমিন করতে চাইলে বর্তমান অ্যাডমিনদের একজনকে সদস্য হিসেবে নামিয়ে দিতে হবে।`
+          );
+          setUpdatingId(null);
+          return;
+        }
+
+        if (!window.confirm(`আপনি কি "${user.name}"-কে অ্যাডমিন হিসেবে পদোন্নতি দিতে চান?`)) {
+          setUpdatingId(null);
+          return;
+        }
+
+        // 1. Add to /admins/{email}
+        await setDoc(doc(db, 'admins', userEmail), {
+          email: userEmail,
+          active: true,
+          createdAt: new Date().toISOString(),
+        });
+
+        // 2. Update user profile role
+        await updateDoc(doc(db, 'users', user.id), { role: 'admin' });
+
+        showFeedback('success', `${user.name}-কে সফলভাবে অ্যাডমিন করা হয়েছে।`);
+      } else {
+        // Demoting from Admin: Ensure at least 1 admin remains
+        if (currentAdmins.length <= 1) {
+          showFeedback('error', 'সিস্টেমে অন্তত ১ জন অ্যাডমিন আবশ্যক।');
+          setUpdatingId(null);
+          return;
+        }
+
+        if (
+          !window.confirm(
+            `আপনি কি "${user.name}"-এর অ্যাডমিন ক্ষমতা বাতিল করে সাধারণ সদস্য করতে চান?`
+          )
+        ) {
+          setUpdatingId(null);
+          return;
+        }
+
+        // 1. Delete from /admins/{email}
+        await deleteDoc(doc(db, 'admins', userEmail));
+
+        // 2. Update user profile role
+        await updateDoc(doc(db, 'users', user.id), { role: 'user' });
+
+        showFeedback('success', `${user.name}-এর অ্যাডমিন ক্ষমতা প্রত্যাহার করা হয়েছে।`);
+      }
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `users/${user.id}`);
-      showFeedback('error', 'পদবি পরিবর্তন করা যায়নি।');
+      console.error('Admin role update error:', err);
+      handleFirestoreError(err, OperationType.WRITE, `admins/${userEmail}`);
+      showFeedback('error', 'ভূমিকা পরিবর্তন করা যায়নি।');
     } finally {
       setUpdatingId(null);
     }
@@ -163,9 +211,9 @@ export const AdminUsers: React.FC = () => {
         <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800 text-purple-900 dark:text-purple-200">
           <ShieldAlert className="w-5 h-5 text-purple-600 shrink-0" />
           <div className="text-xs">
-            <p className="font-semibold">অ্যাডমিন সীমা নিয়ন্ত্রণ</p>
+            <p className="font-semibold">অ্যাডমিন সীমা নিয়ন্ত্রণ (Firestore Security Rules)</p>
             <p className="text-[11px] text-purple-700 dark:text-purple-300">
-              বর্তমান সক্রিয় অ্যাডমিন: <strong>{toBengaliNumber(currentAdminCount)} / {toBengaliNumber(MAX_ADMINS)} জন</strong> (সর্বোচ্চ ২ জন)
+              বর্তমান সক্রিয় অ্যাডমিন: <strong>{toBengaliNumber(currentAdminCount)} / {toBengaliNumber(MAX_ADMINS)} জন</strong> (সর্বোচ্চ {toBengaliNumber(MAX_ADMINS)} জন)
             </p>
           </div>
         </div>
@@ -210,6 +258,7 @@ export const AdminUsers: React.FC = () => {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {users.map((u) => {
                   const isUpdating = updatingId === u.id;
+                  const isUserAdmin = adminEmails.includes(u.email.toLowerCase().trim()) || u.role === 'admin';
 
                   return (
                     <tr
@@ -259,18 +308,18 @@ export const AdminUsers: React.FC = () => {
                           onClick={() => handleToggleAdminRole(u)}
                           disabled={isUpdating}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                            u.role === 'admin'
+                            isUserAdmin
                               ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 border border-purple-300 dark:border-purple-800'
                               : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-purple-50 dark:hover:bg-purple-950/40'
                           }`}
                           title={
-                            u.role === 'admin'
+                            isUserAdmin
                               ? 'অ্যাডমিন পদবি সরান'
                               : 'অ্যাডমিন হিসেবে পদোন্নতি দিন (সর্বোচ্চ ২ জন)'
                           }
                         >
                           <Shield className="w-3.5 h-3.5" />
-                          <span>{u.role === 'admin' ? 'অ্যাডমিন' : 'সদস্য'}</span>
+                          <span>{isUserAdmin ? 'অ্যাডমিন' : 'সদস্য'}</span>
                         </button>
                       </td>
 

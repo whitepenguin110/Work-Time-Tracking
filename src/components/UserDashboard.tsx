@@ -26,7 +26,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
+import { db, handleFirestoreError, OperationType, getBengaliErrorMessage } from '../services/firebase';
 import { Task, Category, TaskStatus } from '../types';
 import { TaskModal } from './TaskModal';
 import {
@@ -57,6 +57,7 @@ export const UserDashboard: React.FC = () => {
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [errorNotification, setErrorNotification] = useState<{ message: string; indexUrl: string | null } | null>(null);
 
   // 1. Fetch Categories for user's department
   useEffect(() => {
@@ -72,7 +73,8 @@ export const UserDashboard: React.FC = () => {
         setCategories(catList);
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'categories');
+        const parsed = getBengaliErrorMessage(error);
+        setErrorNotification(parsed);
       }
     );
     return () => unsubscribe();
@@ -98,9 +100,11 @@ export const UserDashboard: React.FC = () => {
         list.sort((a, b) => (b.workDate || '').localeCompare(a.workDate || ''));
         setTasks(list);
         setLoadingTasks(false);
+        setErrorNotification(null);
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'tasks');
+        const parsed = getBengaliErrorMessage(error);
+        setErrorNotification(parsed);
         setLoadingTasks(false);
       }
     );
@@ -251,6 +255,29 @@ export const UserDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Friendly Bengali Error Alert (Permission-Denied or Missing Index) */}
+      {errorNotification && (
+        <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs shadow-xs space-y-2 animate-fade-in">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" />
+            <span>{errorNotification.message}</span>
+          </div>
+          {errorNotification.indexUrl && (
+            <div className="pt-1">
+              <a
+                href={errorNotification.indexUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium shadow-xs transition"
+              >
+                <span>ফায়ারবেসে ইনডেক্স তৈরি করুন</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Welcome Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 text-white shadow-lg shadow-emerald-900/10">
         <div>

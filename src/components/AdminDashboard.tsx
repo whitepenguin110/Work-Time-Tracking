@@ -20,7 +20,7 @@ import {
   ExternalLink,
   AlertCircle
 } from 'lucide-react';
-import { db, handleFirestoreError, OperationType } from '../services/firebase';
+import { db, handleFirestoreError, OperationType, getBengaliErrorMessage } from '../services/firebase';
 import { UserProfile, Task, Department, DEPARTMENTS } from '../types';
 import {
   toBengaliNumber,
@@ -44,6 +44,7 @@ export const AdminDashboard: React.FC = () => {
 
   // Selected user for inspection modal (read-only)
   const [selectedUserForTasks, setSelectedUserForTasks] = useState<UserProfile | null>(null);
+  const [errorNotification, setErrorNotification] = useState<{ message: string; indexUrl: string | null } | null>(null);
 
   // 1. Fetch all users
   useEffect(() => {
@@ -55,9 +56,11 @@ export const AdminDashboard: React.FC = () => {
           list.push({ id: d.id, ...d.data() } as UserProfile);
         });
         setUsers(list);
+        setErrorNotification(null);
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'users');
+        const parsed = getBengaliErrorMessage(error);
+        setErrorNotification(parsed);
       }
     );
     return () => unsub();
@@ -76,7 +79,8 @@ export const AdminDashboard: React.FC = () => {
         setLoading(false);
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'tasks');
+        const parsed = getBengaliErrorMessage(error);
+        setErrorNotification(parsed);
         setLoading(false);
       }
     );
@@ -175,6 +179,29 @@ export const AdminDashboard: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Friendly Bengali Error Alert */}
+      {errorNotification && (
+        <div className="p-4 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs shadow-xs space-y-2 animate-fade-in">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" />
+            <span>{errorNotification.message}</span>
+          </div>
+          {errorNotification.indexUrl && (
+            <div className="pt-1">
+              <a
+                href={errorNotification.indexUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium shadow-xs transition"
+              >
+                <span>ফায়ারবেসে ইনডেক্স তৈরি করুন</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>

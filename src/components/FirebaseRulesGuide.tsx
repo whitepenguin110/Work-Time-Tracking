@@ -8,120 +8,93 @@ export const FirebaseRulesGuide: React.FC = () => {
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Default deny catch-all
+    // Default deny all access
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // Authentication helpers
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null && request.auth.token.email_verified == true;
     }
 
-    function isEmailVerified() {
-      return isSignedIn() && request.auth.token.email_verified == true;
-    }
-
-    function isBootstrappedAdmin() {
-      return isEmailVerified() && (
-        request.auth.token.email == 'whitepenguin110@gmail.com'
-      );
-    }
-
+    // Admin verification: document must exist in /admins/{email}
     function isAdmin() {
-      return isSignedIn() && (
-        isBootstrappedAdmin() ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true)
-      );
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
     }
 
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isValidUser(data) {
-      return data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
-             data.email is string && data.email.size() > 0 && data.email.size() <= 150 &&
-             data.department in ['graphic', 'video'] &&
-             data.role in ['admin', 'user'] &&
-             data.active is bool;
-    }
-
-    function isValidCategory(data) {
-      return data.name is string && data.name.size() > 0 && data.name.size() <= 150 &&
-             data.department in ['graphic', 'video'] &&
-             data.incentive is number && data.incentive >= 0 &&
-             data.active is bool;
-    }
-
-    function isValidTask(data) {
-      return data.ownerUid is string && data.ownerUid == request.auth.uid &&
-             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
-             data.categoryId is string && data.categoryId.size() <= 128 &&
-             data.department in ['graphic', 'video'] &&
-             data.workDate is string && data.workDate.size() <= 10 &&
-             data.dueDate is string && data.dueDate.size() <= 10 &&
-             data.status in ['pending', 'in_progress', 'completed'] &&
-             data.incentiveAmount is number && data.incentiveAmount >= 0;
-    }
-
-    // 1. Users collection
+    // 1. Users collection: users/{uid}
     match /users/{userId} {
       allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow list: if isSignedIn() && isAdmin();
 
-      // On register:
-      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (
-        (isBootstrappedAdmin() && request.resource.data.role in ['admin', 'user']) ||
-        (!isBootstrappedAdmin() && request.resource.data.role == 'user')
-      );
+      // On create: Only the owner can create their profile.
+      // Must have role == "user", active == true, department in ["graphic", "video"]
+      allow create: if isOwner(userId) &&
+        request.resource.data.keys().hasAll(['name', 'email', 'department', 'role', 'active']) &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        request.resource.data.email is string && request.resource.data.email == request.auth.token.email &&
+        request.resource.data.department in ['graphic', 'video'] &&
+        request.resource.data.role == 'user' &&
+        request.resource.data.active == true;
 
-      // On update: Admin can update role, department, active status.
-      // User can only update their name, keeping email, role, department, and active unchanged.
-      allow update: if isSignedIn() && isValidUser(request.resource.data) && (
-        isAdmin() ||
+      // On update:
+      // Regular user can ONLY update their own name (cannot change role, active, or department)
+      // Admins can update department and active status
+      allow update: if isSignedIn() && (
         (isOwner(userId) &&
          request.resource.data.email == resource.data.email &&
          request.resource.data.role == resource.data.role &&
          request.resource.data.department == resource.data.department &&
-         request.resource.data.active == resource.data.active)
+         request.resource.data.active == resource.data.active &&
+         request.resource.data.name is string && request.resource.data.name.size() > 0) ||
+        (isAdmin() &&
+         request.resource.data.email == resource.data.email &&
+         request.resource.data.role == resource.data.role &&
+         request.resource.data.department in ['graphic', 'video'] &&
+         request.resource.data.active is bool)
       );
 
       allow delete: if isAdmin();
     }
 
-    // 2. Categories collection
+    // 2. Categories collection: categories/{id}
     match /categories/{categoryId} {
-      // Anyone signed in can read/list categories to pick them in task forms
       allow get, list: if isSignedIn();
-      // Only admin can create, update, or soft-delete categories
-      allow create: if isAdmin() && isValidCategory(request.resource.data);
-      allow update: if isAdmin() && isValidCategory(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
-    // 3. Tasks collection
+    // 3. Tasks collection: tasks/{id}
     match /tasks/{taskId} {
-      // User can only see their own tasks; admin can see all tasks
-      allow get: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+      allow get, list: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
 
-      allow create: if isEmailVerified() &&
+      allow create: if isSignedIn() &&
         request.resource.data.ownerUid == request.auth.uid &&
-        isValidTask(request.resource.data);
+        request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+        request.resource.data.department in ['graphic', 'video'] &&
+        request.resource.data.status in ['pending', 'in_progress', 'completed'];
 
-      allow update: if isEmailVerified() && (
-        (resource.data.ownerUid == request.auth.uid &&
-         request.resource.data.ownerUid == resource.data.ownerUid &&
-         isValidTask(request.resource.data)) ||
-        isAdmin()
-      );
+      // Owner can update their own task; admins CANNOT edit
+      allow update: if isSignedIn() &&
+        resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.ownerUid == resource.data.ownerUid &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+        request.resource.data.status in ['pending', 'in_progress', 'completed'];
 
-      allow delete: if isSignedIn() && (
-        resource.data.ownerUid == request.auth.uid || isAdmin()
-      );
+      // Owner can delete their own task; admins CANNOT delete
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // 4. Admins collection: admins/{email}
+    match /admins/{email} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
   }
 }`;
@@ -163,7 +136,7 @@ service cloud.firestore {
             ইউজার ডেটা গোপনীয়তা
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-            সাধারণ ইউজাররা কেবলমাত্র নিজের কাজের তালিকা দেখতে, যোগ ও সম্পাদন করতে পারবেন। অন্যের কাজ দেখার সুযোগ সম্পূর্ণ বন্ধ।
+            সাধারণ ইউজাররা কেবলমাত্র নিজের কাজের তালিকা দেখতে, যোগ ও সম্পাদন করতে পারবেন। অ্যাডমিন সব দেখতে পারবেন, তবে কোনো ইউজারের কাজ এডিট বা মুছতে পারবেন না।
           </p>
         </div>
 
@@ -180,46 +153,35 @@ service cloud.firestore {
         <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
           <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400 font-semibold text-xs mb-1">
             <Terminal className="w-4 h-4" />
-            ক্যাটাগরি নিয়ন্ত্রণ
+            অ্যাডমিন কালেকশন ও CLI ডিপ্লয়
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-            সব সাইন-ইন করা সদস্য ক্যাটাগরি তালিকা দেখতে পারবেন, তবে নতুন ক্যাটাগরি তৈরি বা রেট পরিবর্তনের অধিকার কেবল অ্যাডমিনের।
+            অ্যাডমিন অধিকার <code className="text-purple-600 font-mono">/admins/&#123;email&#125;</code> কালেকশনের মাধ্যমে যাচাই হয়। টার্মিনাল থেকে <code className="text-emerald-600 font-mono">npm run deploy:rules</code> কমান্ড দিয়ে রুলস ও ইনডেক্স ডিপ্লয় করা যায়।
           </p>
         </div>
       </div>
 
-      {/* Step by Step Deployment Guide in Bengali */}
+      {/* Deployment Methods in Bengali */}
       <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
         <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-          কীভাবে ফায়ারবেস কনসোলে এই রুলস বসাবেন (ধাপে ধাপে):
+          রুলস ডিপ্লয় করার উপায়:
         </h3>
 
-        <ol className="space-y-3 text-xs text-slate-700 dark:text-slate-300 list-decimal list-inside leading-relaxed">
-          <li className="pl-1">
-            প্রথমে আপনার ব্রাউজারে{' '}
-            <a
-              href="https://console.firebase.google.com"
-              target="_blank"
-              rel="noreferrer"
-              className="text-emerald-600 font-semibold underline inline-flex items-center gap-1"
-            >
-              Firebase Console <ExternalLink className="w-3 h-3" />
-            </a>{' '}
-            -এ গিয়ে আপনার সংশ্লিষ্ট প্রোজেক্টটি ওপেন করুন।
-          </li>
-          <li className="pl-1">
-            বামপাশের মেনু থেকে <strong>Build &gt; Firestore Database</strong>-এ ক্লিক করুন।
-          </li>
-          <li className="pl-1">
-            উপরে থাকা ট্যাবগুলোর মধ্যে <strong>Rules</strong> ট্যাবে ক্লিক করুন।
-          </li>
-          <li className="pl-1">
-            সেখানে থাকা পুরনো কোড মুছে ফেলে নিচের বক্সের সম্পূর্ণ কোডটি পেস্ট করুন।
-          </li>
-          <li className="pl-1">
-            উপরের ডানপাশে থাকা <strong>Publish</strong> বোতামে ক্লিক করুন। সাথে সাথেই আপনার ডেটাবেসের সকল রুলস কার্যকর হয়ে যাবে!
-          </li>
-        </ol>
+        <div className="space-y-3 text-xs text-slate-700 dark:text-slate-300">
+          <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
+            <p className="font-semibold text-slate-900 dark:text-white mb-1">পদ্ধতি ১: Firebase CLI দিয়ে (এক ক্লিকে)</p>
+            <p className="text-slate-600 dark:text-slate-400">টার্মিনালে রান করুন:</p>
+            <code className="block mt-1 p-2 bg-slate-950 text-emerald-400 rounded-lg font-mono">npm run deploy:rules</code>
+          </div>
+
+          <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
+            <p className="font-semibold text-slate-900 dark:text-white mb-1">পদ্ধতি ২: Firebase Console থেকে সরাসরি পেস্ট</p>
+            <ol className="list-decimal list-inside space-y-1 text-slate-600 dark:text-slate-400">
+              <li>Firebase Console-এ গিয়ে <strong>Firestore Database &gt; Rules</strong>-এ যান।</li>
+              <li>নিচের কোডটি কপি করে পেস্ট করুন এবং <strong>Publish</strong> চাপুন।</li>
+            </ol>
+          </div>
+        </div>
       </div>
 
       {/* Code Viewer with Copy Button */}
@@ -231,7 +193,7 @@ service cloud.firestore {
             className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white transition font-medium"
           >
             {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-            {copied ? 'কপি হয়েছে' : 'কপি করুন'}
+            {copied ? 'কপি হয়েছে' : 'কপি করুন'}
           </button>
         </div>
         <pre className="p-4 text-xs font-mono text-emerald-300/90 overflow-x-auto leading-relaxed max-h-[450px]">

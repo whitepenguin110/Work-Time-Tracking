@@ -42,22 +42,51 @@ const AuthContext = createContext<AuthContextType>({
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [needsRegistration, setNeedsRegistration] = useState<boolean>(false);
 
-  // Run testConnection on boot as required by skill
+  // Run initial connection test on boot
   useEffect(() => {
     testConnection();
   }, []);
 
-  const fetchProfile = useCallback(async (firebaseUser: User) => {
+  const fetchProfileAndAdminStatus = useCallback(async (firebaseUser: User) => {
     const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const email = (firebaseUser.email || '').toLowerCase().trim();
+    const adminDocRef = doc(db, 'admins', email);
+
     try {
-      const snap = await getDoc(userDocRef);
-      if (snap.exists()) {
-        const data = snap.data() as UserProfile;
-        setProfile({ ...data, id: snap.id });
+      const [userSnap, adminSnap] = await Promise.all([
+        getDoc(userDocRef),
+        getDoc(adminDocRef).catch(() => null), // Non-admins might get permission-denied reading /admins
+      ]);
+
+      const isBootstrapEmail = INITIAL_ADMIN_EMAILS.some((e) => e.toLowerCase().trim() === email);
+      const isActualAdmin = adminSnap?.exists() || isBootstrapEmail;
+      setIsAdmin(Boolean(isActualAdmin));
+
+      if (userSnap.exists()) {
+        const data = userSnap.data() as UserProfile;
+        setProfile({
+          ...data,
+          id: userSnap.id,
+          role: isActualAdmin ? 'admin' : (data.role || 'user'),
+        });
         setNeedsRegistration(false);
+
+        // If bootstrap admin and admin doc doesn't exist yet, seed it
+        if (isBootstrapEmail && (!adminSnap || !adminSnap.exists())) {
+          try {
+            await setDoc(adminDocRef, {
+              email,
+              active: true,
+              createdAt: new Date().toISOString(),
+            }, { merge: true });
+          } catch {
+            // Silently ignore if already restricted
+          }
+        }
       } else {
         setProfile(null);
         setNeedsRegistration(true);
@@ -72,16 +101,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
-        await fetchProfile(firebaseUser);
+        await fetchProfileAndAdminStatus(firebaseUser);
       } else {
         setProfile(null);
+        setIsAdmin(false);
         setNeedsRegistration(false);
       }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [fetchProfile]);
+  }, [fetchProfileAndAdminStatus]);
 
   const signInWithGoogle = async () => {
     try {
@@ -99,6 +129,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signOut(auth);
       setUser(null);
       setProfile(null);
+      setIsAdmin(false);
       setNeedsRegistration(false);
     } catch (error) {
       console.error('Sign out failed:', error);
@@ -120,7 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       name: name.trim() || user.displayName || 'নামহীন',
       email: normalizedEmail,
       department,
-      role,
+      role: 'user', // strictly conforms to security rules requirement: on create role must be 'user'
       active: true,
       createdAt: new Date().toISOString(),
     };
@@ -128,11 +159,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const userDocRef = doc(db, 'users', user.uid);
     try {
       await setDoc(userDocRef, newProfile);
+
+      // If initial admin, create admins document
+      if (isInitialAdmin) {
+        try {
+          await setDoc(doc(db, 'admins', normalizedEmail), {
+            email: normalizedEmail,
+            active: true,
+            createdAt: new Date().toISOString(),
+          }, { merge: true });
+          setIsAdmin(true);
+          newProfile.role = 'admin';
+        } catch (e) {
+          console.warn('Admin doc creation deferred:', e);
+        }
+      }
+
       setProfile(newProfile);
       setNeedsRegistration(false);
 
-      // If user registered as admin, seed categories if not seeded yet
-      if (role === 'admin') {
+      if (isInitialAdmin) {
         seedCategoriesIfEmpty();
       }
     } catch (err) {
@@ -143,11 +189,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshProfile = async () => {
     if (user) {
-      await fetchProfile(user);
+      await fetchProfileAndAdminStatus(user);
     }
   };
-
-  const isAdmin = profile?.role === 'admin' && profile?.active === true;
 
   return (
     <AuthContext.Provider
