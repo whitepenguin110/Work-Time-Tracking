@@ -35,19 +35,44 @@ import {
   checkIsOverdue
 } from '../utils/bengali';
 
+import { useAuth } from '../context/AuthContext';
+
 interface AdminDashboardProps {
   onNavigateTab?: (tab: AdminViewTab) => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab }) => {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [allTasks, setAllTasks] = useState<Task[]>([]);
+  const { profile } = useAuth();
+  const adminScope = profile?.adminDepartmentScope || 'all';
+
+  const [rawUsers, setRawUsers] = useState<UserProfile[]>([]);
+  const [rawAllTasks, setRawAllTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters
-  const [departmentFilter, setDepartmentFilter] = useState<string>('all');
+  const [departmentFilter, setDepartmentFilter] = useState<string>(
+    adminScope === 'graphic' ? 'graphic' : adminScope === 'video' ? 'video' : 'all'
+  );
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthString());
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  useEffect(() => {
+    if (adminScope === 'graphic') setDepartmentFilter('graphic');
+    if (adminScope === 'video') setDepartmentFilter('video');
+  }, [adminScope]);
+
+  // Scoped users and tasks
+  const users = useMemo(() => {
+    if (adminScope === 'graphic') return rawUsers.filter((u) => u.department === 'graphic');
+    if (adminScope === 'video') return rawUsers.filter((u) => u.department === 'video');
+    return rawUsers;
+  }, [rawUsers, adminScope]);
+
+  const allTasks = useMemo(() => {
+    if (adminScope === 'graphic') return rawAllTasks.filter((t) => t.department === 'graphic');
+    if (adminScope === 'video') return rawAllTasks.filter((t) => t.department === 'video');
+    return rawAllTasks;
+  }, [rawAllTasks, adminScope]);
 
   // Selected user for inspection modal (read-only)
   const [selectedUserForTasks, setSelectedUserForTasks] = useState<UserProfile | null>(null);
@@ -62,7 +87,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
         snapshot.forEach((d) => {
           list.push({ id: d.id, ...d.data() } as UserProfile);
         });
-        setUsers(list);
+        setRawUsers(list);
         setErrorNotification(null);
       },
       (error) => {
@@ -82,7 +107,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateTab })
         snapshot.forEach((d) => {
           list.push({ id: d.id, ...d.data() } as Task);
         });
-        setAllTasks(list);
+        setRawAllTasks(list);
         setLoading(false);
       },
       (error) => {

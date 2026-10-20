@@ -13,7 +13,7 @@ import {
   FileSpreadsheet,
   Check
 } from 'lucide-react';
-import { Task, Category, TaskStatus, Department, UserProfile, DEPARTMENTS } from '../types';
+import { Task, Category, TaskStatus, Department, UserProfile, DEPARTMENTS, TaskUrgency } from '../types';
 import {
   formatBengaliCurrency,
   getTodayDateString,
@@ -56,6 +56,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
   const [assignedToUid, setAssignedToUid] = useState<string>('');
 
   const [name, setName] = useState('');
+  const [clientName, setClientName] = useState('');
+  const [urgency, setUrgency] = useState<TaskUrgency>('medium');
   
   // ক্যাটাগরি হাতে লেখার ইনপুট
   const [categoryName, setCategoryName] = useState('');
@@ -122,6 +124,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
       setAssignedToUid(taskToEdit.assignedToUid || '');
 
       setName(taskToEdit.name || '');
+      setClientName(taskToEdit.clientName || '');
+      setUrgency(taskToEdit.urgency || 'medium');
       setCategoryName(taskToEdit.categoryName || '');
       setWorkDate(taskToEdit.workDate || getTodayDateString());
       setDueDate(taskToEdit.dueDate || getTodayDateString());
@@ -153,6 +157,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
     } else {
       setDepartment(defaultDepartment);
       setName('');
+      setClientName('');
+      setUrgency('medium');
       setCategoryName('');
       const today = getTodayDateString();
       setWorkDate(today);
@@ -260,6 +266,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         createdByName: currentAuthProfile?.name || currentAuthUser?.displayName || 'অ্যাডমিন',
         createdByEmail: currentAuthUser?.email || '',
         name: name.trim(),
+        clientName: clientName.trim(),
+        urgency: urgency || 'medium',
         categoryId: sanitizedCatId,
         categoryName: categoryName.trim(),
         department,
@@ -285,8 +293,11 @@ export const TaskModal: React.FC<TaskModalProps> = ({
         taskPayload.rejectionReason = taskToEdit.rejectionReason;
       }
 
-      await onSave(taskPayload);
+      // Optimistically close modal immediately for fast UX so user never sees 'সংযোগ হচ্ছে...' stuck
       onClose();
+      onSave(taskPayload).catch((err: unknown) => {
+        console.error('Error saving task:', err);
+      });
     } catch (err: unknown) {
       console.error('Error saving task:', err);
       const { message } = getBengaliErrorMessage(err);
@@ -338,13 +349,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                disabled={Boolean(taskToEdit)}
+                disabled={Boolean(taskToEdit) || currentAuthProfile?.adminDepartmentScope === 'video'}
                 onClick={() => handleDepartmentChange('graphic')}
                 className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
                   department === 'graphic'
                     ? 'border-pink-500 bg-pink-50 dark:bg-pink-950/40 text-pink-700 dark:text-pink-300 ring-1 ring-pink-500'
                     : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
+                } ${currentAuthProfile?.adminDepartmentScope === 'video' ? 'opacity-40 cursor-not-allowed' : ''}`}
               >
                 <Palette className="w-3.5 h-3.5 text-pink-500" />
                 <span>গ্রাফিক ডিজাইন</span>
@@ -352,13 +363,13 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 
               <button
                 type="button"
-                disabled={Boolean(taskToEdit)}
+                disabled={Boolean(taskToEdit) || currentAuthProfile?.adminDepartmentScope === 'graphic'}
                 onClick={() => handleDepartmentChange('video')}
                 className={`py-2 px-3 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition ${
                   department === 'video'
                     ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 ring-1 ring-blue-500'
                     : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'
-                }`}
+                } ${currentAuthProfile?.adminDepartmentScope === 'graphic' ? 'opacity-40 cursor-not-allowed' : ''}`}
               >
                 <Video className="w-3.5 h-3.5 text-blue-500" />
                 <span>ভিডিও এডিটিং ও প্রোডাকশন</span>
@@ -456,6 +467,88 @@ export const TaskModal: React.FC<TaskModalProps> = ({
               required
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none transition"
             />
+          </div>
+
+          {/* ৪) কাজ প্রদানকারী ব্যক্তি / ক্লায়েন্ট */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+              <span>কাজটি কোন ব্যক্তি দিচ্ছেন তার নাম / ক্লায়েন্ট</span>
+              <span className="text-[10px] text-slate-400 font-normal">ঐচ্ছিক</span>
+            </label>
+            <input
+              type="text"
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              placeholder="যেমন: রফিক সাহেব / তানভীর ভাই / মার্কেটিং টিম..."
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none transition"
+            />
+          </div>
+
+          {/* ৫) কাজের জরুরিত্ব (Urgency Level - ৩টি স্তর ও ৩টি কালার) */}
+          <div className="p-3 bg-slate-50/80 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+            <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between">
+              <span>কাজের জরুরিত্ব (Urgency Level) <span className="text-red-500">*</span></span>
+              <span className="text-[10px] text-slate-400 font-normal">কাজের অগ্রাধিকার স্তর বেছে নিন</span>
+            </label>
+
+            <div className="grid grid-cols-3 gap-2">
+              {/* খুব জরুরি - লাল */}
+              <button
+                type="button"
+                onClick={() => setUrgency('urgent')}
+                className={`py-2.5 px-3 rounded-xl border text-left transition relative flex flex-col justify-between cursor-pointer ${
+                  urgency === 'urgent'
+                    ? 'bg-red-600 text-white border-red-600 shadow-md ring-2 ring-red-400'
+                    : 'bg-red-50/70 hover:bg-red-100/70 dark:bg-red-950/20 text-red-700 dark:text-red-300 border-red-200 dark:border-red-900/60'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-bold text-xs">
+                  <span className={`w-2.5 h-2.5 rounded-full ${urgency === 'urgent' ? 'bg-white' : 'bg-red-500'} animate-pulse`} />
+                  <span>খুব জরুরি</span>
+                </div>
+                <span className={`text-[10px] mt-1 font-medium ${urgency === 'urgent' ? 'text-red-100' : 'text-red-600 dark:text-red-400'}`}>
+                  সবার আগে করণীয়
+                </span>
+              </button>
+
+              {/* মাঝারি জরুরি - হলুদ/অ্যাম্বার */}
+              <button
+                type="button"
+                onClick={() => setUrgency('medium')}
+                className={`py-2.5 px-3 rounded-xl border text-left transition relative flex flex-col justify-between cursor-pointer ${
+                  urgency === 'medium'
+                    ? 'bg-amber-500 text-white border-amber-500 shadow-md ring-2 ring-amber-300'
+                    : 'bg-amber-50/70 hover:bg-amber-100/70 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-900/60'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-bold text-xs">
+                  <span className={`w-2.5 h-2.5 rounded-full ${urgency === 'medium' ? 'bg-white' : 'bg-amber-500'}`} />
+                  <span>মাঝারি জরুরি</span>
+                </div>
+                <span className={`text-[10px] mt-1 font-medium ${urgency === 'medium' ? 'text-amber-100' : 'text-amber-700 dark:text-amber-400'}`}>
+                  স্বাভাবিক গতিতে
+                </span>
+              </button>
+
+              {/* সাধারণ কাজ - সবুজ */}
+              <button
+                type="button"
+                onClick={() => setUrgency('normal')}
+                className={`py-2.5 px-3 rounded-xl border text-left transition relative flex flex-col justify-between cursor-pointer ${
+                  urgency === 'normal'
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-400'
+                    : 'bg-emerald-50/70 hover:bg-emerald-100/70 dark:bg-emerald-950/20 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900/60'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-bold text-xs">
+                  <span className={`w-2.5 h-2.5 rounded-full ${urgency === 'normal' ? 'bg-white' : 'bg-emerald-500'}`} />
+                  <span>সাধারণ কাজ</span>
+                </div>
+                <span className={`text-[10px] mt-1 font-medium ${urgency === 'normal' ? 'text-emerald-100' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                  জরুরি নয় তবে করতে হবে
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* ৪) ক্যাটাগরি (হাতে লিখে দিবে) */}

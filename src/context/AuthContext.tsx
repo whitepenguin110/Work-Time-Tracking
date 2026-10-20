@@ -1,40 +1,38 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import {
-  User,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  updatePassword,
-  updateProfile
-} from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import {
-  auth,
-  db,
-  googleProvider,
-  handleFirestoreError,
-  OperationType,
-  testConnection,
-  seedCategoriesIfEmpty
-} from '../services/firebase';
 import { UserProfile, Department, UserRole } from '../types';
-import { isFixedAdminEmail } from '../config/admins';
+import {
+  authenticateAdmin,
+  authenticateTeamMember,
+  ADMIN_ACCOUNTS,
+  TEAM_MEMBERS_LIST
+} from '../config/accounts';
+import {
+  syncAllTeamMembers,
+  updateMemberRealName,
+  getCachedRealNames,
+  formatMemberDisplayName
+} from '../services/teamService';
+import { seedCategoriesIfEmpty, testConnection } from '../services/firebase';
+
+export interface SimpleAuthUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  username?: string;
+}
+
+const LOCAL_STORAGE_SESSION_KEY = 'kajer_hishab_session_user_v2';
 
 interface AuthContextType {
-  user: User | null;
+  user: SimpleAuthUser | null;
   profile: UserProfile | null;
   loading: boolean;
   needsRegistration: boolean;
   isAdmin: boolean;
-  signInWithGoogle: () => Promise<void>;
-  signInWithEmail: (email: string, password: string) => Promise<void>;
-  signUpWithEmail: (name: string, email: string, password: string, department: Department) => Promise<void>;
-  changePassword: (newPassword: string) => Promise<void>;
-  updateUserName: (newName: string) => Promise<void>;
+  adminDepartmentScope?: 'all' | 'graphic' | 'video';
+  loginWithCredentials: (identifier: string, password: string) => Promise<void>;
   signOutUser: () => Promise<void>;
-  registerProfile: (name: string, department: Department) => Promise<void>;
+  updateMemberName: (username: string, newRealName: string) => Promise<{ success: boolean; error?: string }>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -44,261 +42,169 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   needsRegistration: false,
   isAdmin: false,
-  signInWithGoogle: async () => {},
-  signInWithEmail: async () => {},
-  signUpWithEmail: async () => {},
-  changePassword: async () => {},
-  updateUserName: async () => {},
+  adminDepartmentScope: undefined,
+  loginWithCredentials: async () => {},
   signOutUser: async () => {},
-  registerProfile: async () => {},
+  updateMemberName: async () => ({ success: false }),
   refreshProfile: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<SimpleAuthUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
-  const [needsRegistration, setNeedsRegistration] = useState<boolean>(false);
 
+  // Initialize DB and sync team members in background
   useEffect(() => {
     testConnection();
+    seedCategoriesIfEmpty().catch(() => {});
+    syncAllTeamMembers().catch(() => {});
   }, []);
 
-  const fetchProfileAndAdminStatus = useCallback(async (firebaseUser: User) => {
-    const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const email = (firebaseUser.email || '').toLowerCase().trim();
-    const isFixedAdmin = isFixedAdminEmail(email);
-
-    setIsAdmin(isFixedAdmin);
-
-    try {
-      const userSnap = await getDoc(userDocRef);
-
-      if (userSnap.exists()) {
-        const data = userSnap.data() as UserProfile;
-        const finalRole: UserRole = isFixedAdmin ? 'admin' : 'user';
-        setProfile({
-          ...data,
-          id: userSnap.id,
-          role: finalRole,
-        });
-        setNeedsRegistration(false);
-
-        // Ensure admin document exists in /admins/{email} for security rules
-        if (isFixedAdmin) {
-          try {
-            await setDoc(
-              doc(db, 'admins', email),
-              {
-                email,
-                active: true,
-                createdAt: new Date().toISOString(),
-              },
-              { merge: true }
-            );
-          } catch {
-            // Silently ignore
-          }
-        }
-      } else {
-        setProfile(null);
-        setNeedsRegistration(true);
-      }
-    } catch (err) {
-      console.error('Error fetching user profile:', err);
-      handleFirestoreError(err, OperationType.GET, `users/${firebaseUser.uid}`);
-    }
-  }, []);
-
+  // Restore session from localStorage on mount
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      if (firebaseUser) {
-        await fetchProfileAndAdminStatus(firebaseUser);
-      } else {
-        setProfile(null);
-        setIsAdmin(false);
-        setNeedsRegistration(false);
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_SESSION_KEY);
+      if (stored) {
+        const parsedProfile: UserProfile = JSON.parse(stored);
+        if (parsedProfile && parsedProfile.id) {
+          const authUser: SimpleAuthUser = {
+            uid: parsedProfile.id,
+            email: parsedProfile.email,
+            displayName: parsedProfile.name,
+            username: parsedProfile.username,
+          };
+          setUser(authUser);
+          setProfile(parsedProfile);
+        }
       }
+    } catch (e) {
+      console.warn('Session restore note:', e);
+      localStorage.removeItem(LOCAL_STORAGE_SESSION_KEY);
+    } finally {
       setLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [fetchProfileAndAdminStatus]);
-
-  // 1. Google Sign In
-  const signInWithGoogle = async () => {
-    try {
-      setLoading(true);
-      await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Google sign in failed:', error);
-      setLoading(false);
-      throw error;
     }
-  };
+  }, []);
 
-  // 2. Email & Password Sign In
-  const signInWithEmail = async (email: string, password: string) => {
-    try {
-      setLoading(true);
-      await signInWithEmailAndPassword(auth, email.trim(), password);
-    } catch (error) {
-      console.error('Email sign in failed:', error);
-      setLoading(false);
-      throw error;
-    }
-  };
+  // Primary Login with Username/Email and Case-Sensitive Password
+  const loginWithCredentials = async (identifier: string, password: string) => {
+    setLoading(true);
 
-  // 3. Email & Password Sign Up (with Name & Department directly)
-  const signUpWithEmail = async (
-    name: string,
-    email: string,
-    password: string,
-    department: Department
-  ) => {
-    try {
-      setLoading(true);
-      const userCred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      const newUser = userCred.user;
+    const trimmedId = identifier.trim();
 
-      // Update Firebase Auth display name
-      await updateProfile(newUser, { displayName: name.trim() });
-
-      const normalizedEmail = email.toLowerCase().trim();
-      const isFixedAdmin = isFixedAdminEmail(normalizedEmail);
-      const role: UserRole = isFixedAdmin ? 'admin' : 'user';
-
-      const newProfile: UserProfile = {
-        id: newUser.uid,
-        name: name.trim(),
-        email: normalizedEmail,
-        department,
-        role,
+    // 1. Check if identifier is an Admin (whitepenguin110@gmail.com, itisamgfx@gmail.com, itvdrive84@gmail.com)
+    const adminConfig = authenticateAdmin(trimmedId, password);
+    if (adminConfig) {
+      const adminProfile: UserProfile = {
+        id: adminConfig.email,
+        name: adminConfig.name,
+        email: adminConfig.email,
+        department: adminConfig.departmentScope === 'all' ? 'graphic' : adminConfig.departmentScope,
+        role: 'admin',
+        adminDepartmentScope: adminConfig.departmentScope,
         active: true,
+        approvalStatus: 'approved',
+        archived: false,
         createdAt: new Date().toISOString(),
       };
 
-      await setDoc(doc(db, 'users', newUser.uid), newProfile);
+      const authUser: SimpleAuthUser = {
+        uid: adminConfig.email,
+        email: adminConfig.email,
+        displayName: adminConfig.name,
+      };
 
-      if (isFixedAdmin) {
-        try {
-          await setDoc(
-            doc(db, 'admins', normalizedEmail),
-            {
-              email: normalizedEmail,
-              active: true,
-              createdAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-        } catch {
-          // Ignore
-        }
-      }
-
-      setProfile(newProfile);
-      setIsAdmin(isFixedAdmin);
-      setNeedsRegistration(false);
-
-      if (isFixedAdmin) {
-        seedCategoriesIfEmpty();
-      }
-    } catch (error) {
-      console.error('Email registration failed:', error);
+      localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(adminProfile));
+      setUser(authUser);
+      setProfile(adminProfile);
       setLoading(false);
-      throw error;
+      return;
     }
+
+    // 2. Check if identifier is a Team Member (designer1..10, videoeditor1..10)
+    const memberConfig = authenticateTeamMember(trimmedId, password);
+    if (memberConfig) {
+      const cachedNames = getCachedRealNames();
+      const realName = cachedNames[memberConfig.username] || '';
+      const displayName = formatMemberDisplayName(memberConfig.username, realName);
+
+      const memberProfile: UserProfile = {
+        id: memberConfig.username,
+        username: memberConfig.username,
+        realName,
+        name: displayName,
+        email: `${memberConfig.username}@team.local`,
+        department: memberConfig.department,
+        role: 'user',
+        active: true,
+        approvalStatus: 'approved',
+        archived: false,
+        createdAt: new Date().toISOString(),
+      };
+
+      const authUser: SimpleAuthUser = {
+        uid: memberConfig.username,
+        username: memberConfig.username,
+        email: `${memberConfig.username}@team.local`,
+        displayName,
+      };
+
+      localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(memberProfile));
+      setUser(authUser);
+      setProfile(memberProfile);
+      setLoading(false);
+      return;
+    }
+
+    // 3. Neither admin nor member matched -> Throw strict error
+    setLoading(false);
+    throw new Error('Wrong username or password');
   };
 
-  // 4. Change Password (for logged in user)
-  const changePassword = async (newPassword: string) => {
-    if (!auth.currentUser) throw new Error('ব্যবহারকারী লগইন করা নেই।');
-    await updatePassword(auth.currentUser, newPassword);
-  };
-
-  // 5. Update Profile Name
-  const updateUserName = async (newName: string) => {
-    if (!auth.currentUser || !profile) throw new Error('ব্যবহারকারী লগইন করা নেই।');
-    const trimmed = newName.trim();
-    if (!trimmed) throw new Error('নাম খালি রাখা যাবে না।');
-
-    await updateProfile(auth.currentUser, { displayName: trimmed });
-    await updateDoc(doc(db, 'users', profile.id), { name: trimmed });
-    setProfile({ ...profile, name: trimmed });
-  };
-
-  // 6. Sign Out
+  // Sign out / Logout
   const signOutUser = async () => {
-    try {
-      await signOut(auth);
-      setUser(null);
-      setProfile(null);
-      setIsAdmin(false);
-      setNeedsRegistration(false);
-    } catch (error) {
-      console.error('Sign out failed:', error);
-      throw error;
-    }
+    localStorage.removeItem(LOCAL_STORAGE_SESSION_KEY);
+    setUser(null);
+    setProfile(null);
   };
 
-  // 7. Complete Registration (for first-time Google sign-ins)
-  const registerProfile = async (name: string, department: Department) => {
-    if (!user) throw new Error('ব্যবহারকারী লগইন করা নেই।');
-
-    const normalizedEmail = (user.email || '').toLowerCase().trim();
-    const isFixedAdmin = isFixedAdminEmail(normalizedEmail);
-    const role: UserRole = isFixedAdmin ? 'admin' : 'user';
-
-    const newProfile: UserProfile = {
-      id: user.uid,
-      name: name.trim() || user.displayName || 'নামহীন',
-      email: normalizedEmail,
-      department,
-      role,
-      active: true,
-      createdAt: new Date().toISOString(),
-    };
-
-    const userDocRef = doc(db, 'users', user.uid);
-    try {
-      await setDoc(userDocRef, newProfile);
-
-      if (isFixedAdmin) {
-        try {
-          await setDoc(
-            doc(db, 'admins', normalizedEmail),
-            {
-              email: normalizedEmail,
-              active: true,
-              createdAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-          setIsAdmin(true);
-        } catch (e) {
-          console.warn('Admin doc creation deferred:', e);
-        }
-      }
-
-      setProfile(newProfile);
-      setNeedsRegistration(false);
-
-      if (isFixedAdmin) {
-        seedCategoriesIfEmpty();
-      }
-    } catch (err) {
-      console.error('Registration failed:', err);
-      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+  // Admin updates real name of a team member
+  const handleUpdateMemberName = async (username: string, newRealName: string) => {
+    if (!profile || profile.role !== 'admin') {
+      return { success: false, error: 'শুধুমাত্র অ্যাডমিন নাম পরিবর্তন করতে পারবেন।' };
     }
+
+    const scope = profile.adminDepartmentScope || 'all';
+    const result = await updateMemberRealName(username, newRealName, scope, profile.email);
+
+    // If the currently logged-in user is the one being renamed, update their state
+    if (result.success && profile.username === username) {
+      const updated = {
+        ...profile,
+        realName: newRealName.trim(),
+        name: formatMemberDisplayName(username, newRealName.trim()),
+      };
+      setProfile(updated);
+      localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(updated));
+    }
+
+    return result;
   };
 
   const refreshProfile = async () => {
-    if (user) {
-      await fetchProfileAndAdminStatus(user);
+    // If user profile needs to reload cached real names
+    if (profile && profile.username) {
+      const cachedNames = getCachedRealNames();
+      const realName = cachedNames[profile.username] || profile.realName || '';
+      const displayName = formatMemberDisplayName(profile.username, realName);
+      const updated = { ...profile, realName, name: displayName };
+      setProfile(updated);
+      localStorage.setItem(LOCAL_STORAGE_SESSION_KEY, JSON.stringify(updated));
     }
   };
+
+  const isAdmin = profile?.role === 'admin';
+  const adminDepartmentScope = profile?.adminDepartmentScope;
 
   return (
     <AuthContext.Provider
@@ -306,15 +212,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         profile,
         loading,
-        needsRegistration,
+        needsRegistration: false, // No registration needed in fixed system
         isAdmin,
-        signInWithGoogle,
-        signInWithEmail,
-        signUpWithEmail,
-        changePassword,
-        updateUserName,
+        adminDepartmentScope,
+        loginWithCredentials,
         signOutUser,
-        registerProfile,
+        updateMemberName: handleUpdateMemberName,
         refreshProfile,
       }}
     >

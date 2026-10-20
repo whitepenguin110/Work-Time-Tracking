@@ -38,9 +38,14 @@ import {
   checkIsOverdue
 } from '../utils/bengali';
 
+import { useAuth } from '../context/AuthContext';
+
 export const AdminAllTasksReport: React.FC = () => {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const { profile } = useAuth();
+  const adminScope = profile?.adminDepartmentScope || 'all';
+
+  const [rawUsers, setRawUsers] = useState<UserProfile[]>([]);
+  const [rawTasks, setRawTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Filters
@@ -49,8 +54,28 @@ export const AdminAllTasksReport: React.FC = () => {
   const [customEndDate, setCustomEndDate] = useState<string>('');
   const [selectedMemberUid, setSelectedMemberUid] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
+  const [selectedDepartment, setSelectedDepartment] = useState<string>(
+    adminScope === 'graphic' ? 'graphic' : adminScope === 'video' ? 'video' : 'all'
+  );
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  useEffect(() => {
+    if (adminScope === 'graphic') setSelectedDepartment('graphic');
+    if (adminScope === 'video') setSelectedDepartment('video');
+  }, [adminScope]);
+
+  // Scoped tasks and users based on logged in admin
+  const tasks = useMemo(() => {
+    if (adminScope === 'graphic') return rawTasks.filter((t) => t.department === 'graphic');
+    if (adminScope === 'video') return rawTasks.filter((t) => t.department === 'video');
+    return rawTasks;
+  }, [rawTasks, adminScope]);
+
+  const users = useMemo(() => {
+    if (adminScope === 'graphic') return rawUsers.filter((u) => u.department === 'graphic');
+    if (adminScope === 'video') return rawUsers.filter((u) => u.department === 'video');
+    return rawUsers;
+  }, [rawUsers, adminScope]);
 
   // PDF Generation State
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
@@ -69,7 +94,7 @@ export const AdminAllTasksReport: React.FC = () => {
       (snap) => {
         const uList: UserProfile[] = [];
         snap.forEach((d) => uList.push({ id: d.id, ...d.data() } as UserProfile));
-        setUsers(uList);
+        setRawUsers(uList);
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'users')
     );
@@ -85,7 +110,7 @@ export const AdminAllTasksReport: React.FC = () => {
           const dateB = b.workDate || b.createdAt || '';
           return dateB.localeCompare(dateA);
         });
-        setTasks(tList);
+        setRawTasks(tList);
         setLoading(false);
       },
       (err) => {
@@ -174,13 +199,16 @@ export const AdminAllTasksReport: React.FC = () => {
     const totalCount = filteredTasks.length;
     let inProgressCount = 0;
     let pendingCount = 0;
+    let pendingApprovalCount = 0;
     let completedApprovedCount = 0;
     let totalIncentive = 0;
 
     filteredTasks.forEach((t) => {
       if (t.status === 'in_progress') {
         inProgressCount++;
-      } else if (t.status === 'pending' || t.approvalStatus === 'pending_approval') {
+      } else if (t.status === 'completed' && t.approvalStatus === 'pending_approval') {
+        pendingApprovalCount++;
+      } else if (t.status === 'pending') {
         pendingCount++;
       } else if (t.status === 'completed' && t.approvalStatus === 'approved') {
         completedApprovedCount++;
@@ -192,6 +220,7 @@ export const AdminAllTasksReport: React.FC = () => {
       totalCount,
       inProgressCount,
       pendingCount,
+      pendingApprovalCount,
       completedApprovedCount,
       totalIncentive
     };
@@ -1029,22 +1058,22 @@ export const AdminAllTasksReport: React.FC = () => {
               }}
             >
               <div style={{ fontSize: '10px', color: '#7e22ce', fontWeight: '600' }}>
-                মোট ইনসেন্টিভ
+                অনুমোদনের অপেক্ষায়
               </div>
               <div
                 style={{
-                  fontSize: '18px',
+                  fontSize: '20px',
                   fontWeight: 'bold',
                   color: '#6b21a8',
                   marginTop: '4px'
                 }}
               >
-                {formatBengaliCurrency(stats.totalIncentive)}
+                {toBengaliNumber(stats.pendingApprovalCount)} টি
               </div>
             </div>
           </div>
 
-          {/* PDF Table */}
+          {/* PDF Table - Pure task & status reporting without incentives */}
           <table
             style={{
               width: '100%',
@@ -1060,7 +1089,6 @@ export const AdminAllTasksReport: React.FC = () => {
                 <th style={{ padding: '8px 10px', textAlign: 'left' }}>সদস্য</th>
                 <th style={{ padding: '8px 8px', textAlign: 'center' }}>তারিখ</th>
                 <th style={{ padding: '8px 8px', textAlign: 'center' }}>অবস্থা</th>
-                <th style={{ padding: '8px 8px', textAlign: 'right' }}>ইনসেন্টিভ</th>
                 <th style={{ padding: '8px 8px', textAlign: 'left' }}>অনুমোদনকারী</th>
               </tr>
             </thead>
@@ -1135,16 +1163,6 @@ export const AdminAllTasksReport: React.FC = () => {
                       >
                         {statusLabel}
                       </span>
-                    </td>
-                    <td
-                      style={{
-                        padding: '6px 8px',
-                        textAlign: 'right',
-                        fontWeight: 'bold',
-                        color: '#047857'
-                      }}
-                    >
-                      {formatBengaliCurrency(t.incentiveAmount)}
                     </td>
                     <td style={{ padding: '6px 8px', fontSize: '9px', color: '#475569' }}>
                       {t.approvedByEmail || '—'}

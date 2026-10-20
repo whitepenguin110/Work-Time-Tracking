@@ -2,14 +2,27 @@ export type Department = 'graphic' | 'video';
 export type UserRole = 'admin' | 'user';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
 export type ApprovalStatus = 'not_submitted' | 'pending_approval' | 'approved' | 'rejected';
+export type MemberApprovalStatus = 'pending' | 'approved' | 'rejected';
 
 export interface UserProfile {
-  id: string; // Firebase Auth UID
+  id: string; // User ID / Username / UID
+  username?: string;
+  realName?: string;
   name: string;
   email: string;
   department: Department;
   role: UserRole;
+  adminDepartmentScope?: 'all' | 'graphic' | 'video';
   active: boolean;
+  approvalStatus?: MemberApprovalStatus; // 'pending' | 'approved' | 'rejected'
+  approvedAt?: string;
+  approvedBy?: string;
+  rejectedReason?: string;
+  archived?: boolean; // soft-delete status
+  archivedAt?: string;
+  archivedBy?: string;
+  archivedReason?: string;
+  restoredAt?: string;
   createdAt: string;
 }
 
@@ -22,6 +35,8 @@ export interface Category {
   createdAt?: string;
 }
 
+export type TaskUrgency = 'urgent' | 'medium' | 'normal';
+
 export interface Task {
   id: string;
   ownerUid: string; // Assigned member UID (for backward compatibility & query safety)
@@ -32,6 +47,8 @@ export interface Task {
   createdByName?: string;
   createdByEmail?: string;
   name: string;
+  clientName?: string; // কাজটি কোন ব্যক্তি দিচ্ছে তার নাম
+  urgency?: TaskUrgency; // 'urgent' (খুব জরুরি - লাল) | 'medium' (মাঝারি - হলুদ) | 'normal' (সাধারণ - সবুজ)
   categoryId: string;
   categoryName: string;
   department: Department;

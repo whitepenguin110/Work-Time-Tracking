@@ -32,17 +32,36 @@ import { toBengaliNumber, formatBengaliCurrency } from '../utils/bengali';
 
 const DELETED_SEED_KEY = 'deleted_seed_category_names';
 
+import { useAuth } from '../context/AuthContext';
+
 export const AdminCategories: React.FC = () => {
+  const { profile } = useAuth();
+  const adminScope = profile?.adminDepartmentScope || 'all';
+
   const [categories, setCategories] = useState<Category[]>([]);
-  const [activeDepartment, setActiveDepartment] = useState<Department | 'all'>('all');
+  const [activeDepartment, setActiveDepartment] = useState<Department | 'all'>(
+    adminScope === 'graphic' ? 'graphic' : adminScope === 'video' ? 'video' : 'all'
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
 
   // নতুন চার্ট রেট যোগ করার স্টেট
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [addName, setAddName] = useState('');
-  const [addDepartment, setAddDepartment] = useState<Department>('graphic');
+  const [addDepartment, setAddDepartment] = useState<Department>(
+    adminScope === 'video' ? 'video' : 'graphic'
+  );
   const [addIncentive, setAddIncentive] = useState<number | ''>(50);
+
+  useEffect(() => {
+    if (adminScope === 'graphic') {
+      setActiveDepartment('graphic');
+      setAddDepartment('graphic');
+    } else if (adminScope === 'video') {
+      setActiveDepartment('video');
+      setAddDepartment('video');
+    }
+  }, [adminScope]);
 
   // চার্ট রেট পূর্ণাঙ্গ এডিট করার মডাল স্টেট
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -329,49 +348,55 @@ export const AdminCategories: React.FC = () => {
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
           {/* ট্যাব সুইচ (সকল / গ্রাফিক / ভিডিও) */}
           <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit flex-wrap gap-1">
-            <button
-              onClick={() => setActiveDepartment('all')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                activeDepartment === 'all'
-                  ? 'bg-white dark:bg-slate-700 text-emerald-700 dark:text-emerald-300 shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <span>সকল চার্ট</span>
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-extrabold">
-                {toBengaliNumber(categories.length)}
-              </span>
-            </button>
+            {adminScope === 'all' && (
+              <button
+                onClick={() => setActiveDepartment('all')}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                  activeDepartment === 'all'
+                    ? 'bg-white dark:bg-slate-700 text-emerald-700 dark:text-emerald-300 shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <span>সকল চার্ট</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-extrabold">
+                  {toBengaliNumber(categories.length)}
+                </span>
+              </button>
+            )}
 
-            <button
-              onClick={() => setActiveDepartment('graphic')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                activeDepartment === 'graphic'
-                  ? 'bg-white dark:bg-slate-700 text-pink-600 dark:text-pink-300 shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <Palette className="w-4 h-4 text-pink-500" />
-              <span>গ্রাফিক ডিজাইন</span>
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-pink-100 dark:bg-pink-950/60 text-pink-700 dark:text-pink-300">
-                {toBengaliNumber(totalGraphicCount)}
-              </span>
-            </button>
+            {(adminScope === 'all' || adminScope === 'graphic') && (
+              <button
+                onClick={() => setActiveDepartment('graphic')}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                  activeDepartment === 'graphic'
+                    ? 'bg-white dark:bg-slate-700 text-pink-600 dark:text-pink-300 shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Palette className="w-4 h-4 text-pink-500" />
+                <span>গ্রাফিক ডিজাইন</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-pink-100 dark:bg-pink-950/60 text-pink-700 dark:text-pink-300">
+                  {toBengaliNumber(totalGraphicCount)}
+                </span>
+              </button>
+            )}
 
-            <button
-              onClick={() => setActiveDepartment('video')}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-                activeDepartment === 'video'
-                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-sm'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <Video className="w-4 h-4 text-blue-500" />
-              <span>ভিডিও এডিটিং</span>
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
-                {toBengaliNumber(totalVideoCount)}
-              </span>
-            </button>
+            {(adminScope === 'all' || adminScope === 'video') && (
+              <button
+                onClick={() => setActiveDepartment('video')}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                  activeDepartment === 'video'
+                    ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-300 shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <Video className="w-4 h-4 text-blue-500" />
+                <span>ভিডিও এডিটিং</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
+                  {toBengaliNumber(totalVideoCount)}
+                </span>
+              </button>
+            )}
           </div>
 
           {/* সার্চ ও নতুন চার্ট রেট যোগ বাটন */}

@@ -52,17 +52,30 @@ interface AdminApprovalsProps {
 
 export const AdminApprovals: React.FC<AdminApprovalsProps> = ({ onNavigateTab }) => {
   const { user, profile } = useAuth();
+  const adminScope = profile?.adminDepartmentScope || 'all';
 
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [rawTasks, setRawTasks] = useState<Task[]>([]);
+  const [rawUsers, setRawUsers] = useState<UserProfile[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Tabs: 'pending_approval' | 'approved' | 'in_progress' | 'all'
   const [activeFilter, setActiveFilter] = useState<'pending_approval' | 'in_progress' | 'approved' | 'all'>('pending_approval');
-  const [departmentFilter, setDepartmentFilter] = useState<string>('all');
+  const [departmentFilter, setDepartmentFilter] = useState<string>(
+    adminScope === 'graphic' ? 'graphic' : adminScope === 'video' ? 'video' : 'all'
+  );
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
+  const [urgencyFilter, setUrgencyFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Keep departmentFilter aligned with adminScope
+  useEffect(() => {
+    if (adminScope === 'graphic') {
+      setDepartmentFilter('graphic');
+    } else if (adminScope === 'video') {
+      setDepartmentFilter('video');
+    }
+  }, [adminScope]);
 
   // Modals
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -86,7 +99,7 @@ export const AdminApprovals: React.FC<AdminApprovalsProps> = ({ onNavigateTab })
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Task));
         // Sort descending by workDate or createdAt
         list.sort((a, b) => (b.workDate || b.createdAt || '').localeCompare(a.workDate || a.createdAt || ''));
-        setTasks(list);
+        setRawTasks(list);
         setLoading(false);
       },
       (err) => {
@@ -104,12 +117,34 @@ export const AdminApprovals: React.FC<AdminApprovalsProps> = ({ onNavigateTab })
       (snap) => {
         const list: UserProfile[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() } as UserProfile));
-        setUsers(list);
+        setRawUsers(list);
       },
       () => {}
     );
     return () => unsub();
   }, []);
+
+  // Filter tasks strictly by adminScope
+  const tasks = useMemo(() => {
+    if (adminScope === 'graphic') {
+      return rawTasks.filter((t) => t.department === 'graphic');
+    }
+    if (adminScope === 'video') {
+      return rawTasks.filter((t) => t.department === 'video');
+    }
+    return rawTasks;
+  }, [rawTasks, adminScope]);
+
+  // Filter team members strictly by adminScope
+  const users = useMemo(() => {
+    if (adminScope === 'graphic') {
+      return rawUsers.filter((u) => u.department === 'graphic');
+    }
+    if (adminScope === 'video') {
+      return rawUsers.filter((u) => u.department === 'video');
+    }
+    return rawUsers;
+  }, [rawUsers, adminScope]);
 
   // 3. Fetch categories
   useEffect(() => {
@@ -243,19 +278,36 @@ export const AdminApprovals: React.FC<AdminApprovalsProps> = ({ onNavigateTab })
         if (t.status !== 'in_progress' && t.status !== 'pending') return false;
       }
 
+      // Urgency filter
+      if (urgencyFilter !== 'all' && (t.urgency || 'medium') !== urgencyFilter) {
+        return false;
+      }
+
       // Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchName = t.name.toLowerCase().includes(q);
+        const matchClient = (t.clientName || '').toLowerCase().includes(q);
         const matchUser = (t.assignedToName || '').toLowerCase().includes(q) || (t.assignedToEmail || '').toLowerCase().includes(q);
         const matchCat = (t.categoryName || '').toLowerCase().includes(q);
         const matchNote = (t.note || '').toLowerCase().includes(q);
-        if (!matchName && !matchUser && !matchCat && !matchNote) return false;
+        if (!matchName && !matchClient && !matchUser && !matchCat && !matchNote) return false;
       }
 
       return true;
+    }).sort((a, b) => {
+      // Prioritize urgent tasks at the top among active/pending tasks
+      const aIsActive = a.status !== 'completed';
+      const bIsActive = b.status !== 'completed';
+      if (aIsActive && bIsActive) {
+        const urgencyWeight: Record<string, number> = { urgent: 3, medium: 2, normal: 1 };
+        const uA = urgencyWeight[a.urgency || 'medium'] || 2;
+        const uB = urgencyWeight[b.urgency || 'medium'] || 2;
+        if (uA !== uB) return uB - uA;
+      }
+      return (b.workDate || b.createdAt || '').localeCompare(a.workDate || a.createdAt || '');
     });
-  }, [tasks, activeFilter, departmentFilter, assigneeFilter, searchQuery]);
+  }, [tasks, activeFilter, departmentFilter, assigneeFilter, urgencyFilter, searchQuery]);
 
   return (
     <div className="space-y-6">

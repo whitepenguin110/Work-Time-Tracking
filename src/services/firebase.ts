@@ -3,21 +3,26 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithCredential,
   signOut,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updatePassword,
-  updateProfile
+  updateProfile,
+  setPersistence,
+  browserLocalPersistence
 } from 'firebase/auth';
 import {
   getFirestore,
   doc,
-  getDocFromServer,
+  getDoc,
   collection,
   getDocs,
   writeBatch,
   query,
-  limit
+  limit,
+  setDoc,
+  updateDoc
 } from 'firebase/firestore';
 import defaultAppletConfig from '../../firebase-applet-config.json';
 import { INITIAL_CATEGORIES } from '../config/seedCategories';
@@ -34,6 +39,11 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+
+// Configure local persistence so sessions persist reliably
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.warn('Auth persistence initialization:', err);
+});
 
 // Use specified custom database ID if provided in env or config
 const customDatabaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || defaultAppletConfig.firestoreDatabaseId;
@@ -135,7 +145,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // Initial connection test
 export async function testConnection(): Promise<void> {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDoc(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn('Firebase connection check: Client currently appears offline.');
@@ -176,6 +186,7 @@ export async function seedCategoriesIfEmpty(): Promise<boolean> {
 
 export {
   signInWithPopup,
+  signInWithCredential,
   signOut,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,

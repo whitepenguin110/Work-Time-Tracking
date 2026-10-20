@@ -21,9 +21,14 @@ import {
   downloadCSV
 } from '../utils/bengali';
 
+import { useAuth } from '../context/AuthContext';
+
 export const AdminReports: React.FC = () => {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const { profile } = useAuth();
+  const adminScope = profile?.adminDepartmentScope || 'all';
+
+  const [rawUsers, setRawUsers] = useState<UserProfile[]>([]);
+  const [rawTasks, setRawTasks] = useState<Task[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentMonthString());
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -33,7 +38,7 @@ export const AdminReports: React.FC = () => {
       (snap) => {
         const uList: UserProfile[] = [];
         snap.forEach((d) => uList.push({ id: d.id, ...d.data() } as UserProfile));
-        setUsers(uList);
+        setRawUsers(uList);
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'users')
     );
@@ -43,7 +48,7 @@ export const AdminReports: React.FC = () => {
       (snap) => {
         const tList: Task[] = [];
         snap.forEach((d) => tList.push({ id: d.id, ...d.data() } as Task));
-        setTasks(tList);
+        setRawTasks(tList);
         setLoading(false);
       },
       (err) => {
@@ -57,6 +62,18 @@ export const AdminReports: React.FC = () => {
       unsubTasks();
     };
   }, []);
+
+  const users = useMemo(() => {
+    if (adminScope === 'graphic') return rawUsers.filter((u) => u.department === 'graphic');
+    if (adminScope === 'video') return rawUsers.filter((u) => u.department === 'video');
+    return rawUsers;
+  }, [rawUsers, adminScope]);
+
+  const tasks = useMemo(() => {
+    if (adminScope === 'graphic') return rawTasks.filter((t) => t.department === 'graphic');
+    if (adminScope === 'video') return rawTasks.filter((t) => t.department === 'video');
+    return rawTasks;
+  }, [rawTasks, adminScope]);
 
   // Filter completed tasks for selected month
   const monthlyData = useMemo(() => {
