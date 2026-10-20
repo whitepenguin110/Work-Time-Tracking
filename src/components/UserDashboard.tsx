@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   collection,
   query,
@@ -23,18 +23,8 @@ import {
   User,
   MessageSquare,
   CheckCircle,
-  Send,
-  Download,
-  FileText,
-  Loader2,
-  CalendarRange,
-  X,
-  Palette,
-  Video,
-  Award
+  Send
 } from 'lucide-react';
-import jsPDF from 'jspdf';
-import { toCanvas } from 'html-to-image';
 import { useAuth } from '../context/AuthContext';
 import { db, handleFirestoreError, OperationType, getBengaliErrorMessage } from '../services/firebase';
 import { Task, Category, TaskStatus, ApprovalStatus } from '../types';
@@ -46,9 +36,7 @@ import {
   getPastMonthsOptions,
   checkIsOverdue,
   getTodayDateString,
-  formatBengaliMonthYear,
-  ReportPeriod,
-  getPeriodDateRange
+  formatBengaliMonthYear
 } from '../utils/bengali';
 
 export const UserDashboard: React.FC = () => {
@@ -58,7 +46,7 @@ export const UserDashboard: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loadingTasks, setLoadingTasks] = useState(true);
 
-  // Filters for main dashboard list
+  // Filters
   const [selectedMonth, setSelectedMonth] = useState<string>('all'); // 'all' or 'YYYY-MM'
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -67,18 +55,6 @@ export const UserDashboard: React.FC = () => {
   const [taskToSubmit, setTaskToSubmit] = useState<Task | null>(null);
   const [submissionNote, setSubmissionNote] = useState<string>('');
   const [isSubmittingTask, setIsSubmittingTask] = useState(false);
-
-  // Individual PDF Report Modal State
-  const [showReportModal, setShowReportModal] = useState(false);
-  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('1_month');
-  const [customStartDate, setCustomStartDate] = useState<string>('');
-  const [customEndDate, setCustomEndDate] = useState<string>('');
-  const [reportStatusFilter, setReportStatusFilter] = useState<string>('all');
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
-  const [pdfSuccessMessage, setPdfSuccessMessage] = useState<string | null>(null);
-
-  // Hidden print reference for PDF generation
-  const reportPrintRef = useRef<HTMLDivElement>(null);
 
   const [errorNotification, setErrorNotification] = useState<{ message: string; indexUrl: string | null } | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -143,16 +119,15 @@ export const UserDashboard: React.FC = () => {
     return () => unsubscribe();
   }, [user]);
 
+  // Calculations for stats
   const currentMonthStr = getCurrentMonthString();
 
-  // Overall Statistics for Dashboard
   const stats = useMemo(() => {
     let total = 0;
     let pending = 0;
     let inProgress = 0;
     let pendingApproval = 0;
     let approved = 0;
-
     let thisMonthApprovedIncentive = 0;
     let allTimeApprovedIncentive = 0;
     let pendingIncentive = 0;
@@ -166,11 +141,12 @@ export const UserDashboard: React.FC = () => {
       } else if (t.status === 'completed') {
         if (t.approvalStatus === 'approved') {
           approved++;
-          allTimeApprovedIncentive += (t.incentiveAmount || 0);
+          const amount = t.incentiveAmount || 0;
+          allTimeApprovedIncentive += amount;
 
-          const taskMonth = (t.approvedAt || t.submitDate || t.workDate || '').slice(0, 7);
-          if (taskMonth === currentMonthStr) {
-            thisMonthApprovedIncentive += (t.incentiveAmount || 0);
+          const refDate = t.approvedAt ? t.approvedAt.slice(0, 7) : (t.submitDate || t.workDate || '').slice(0, 7);
+          if (refDate === currentMonthStr) {
+            thisMonthApprovedIncentive += amount;
           }
         } else {
           // Awaiting approval
@@ -192,7 +168,7 @@ export const UserDashboard: React.FC = () => {
     };
   }, [tasks, currentMonthStr]);
 
-  // Filtered task list for main dashboard
+  // Filtered task list
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
       // Month filter: match workDate or submitDate
@@ -224,77 +200,6 @@ export const UserDashboard: React.FC = () => {
       return true;
     });
   }, [tasks, selectedMonth, statusFilter, searchQuery]);
-
-  // Report Period Date Range Calculation
-  const reportRangeInfo = useMemo(() => {
-    return getPeriodDateRange(reportPeriod, customStartDate, customEndDate);
-  }, [reportPeriod, customStartDate, customEndDate]);
-
-  // Filtered tasks specifically for the Individual PDF Report
-  const reportTasks = useMemo(() => {
-    return tasks.filter((t) => {
-      // Date filter
-      const taskDate = t.workDate || (t.createdAt ? t.createdAt.slice(0, 10) : '');
-      if (taskDate) {
-        if (taskDate < reportRangeInfo.startDate || taskDate > reportRangeInfo.endDate) {
-          return false;
-        }
-      }
-
-      // Status filter
-      if (reportStatusFilter === 'completed' && t.approvalStatus !== 'approved') {
-        return false;
-      }
-      if (reportStatusFilter === 'pending_approval' && (t.status !== 'completed' || t.approvalStatus !== 'pending_approval')) {
-        return false;
-      }
-      if (reportStatusFilter === 'in_progress' && t.status !== 'in_progress') {
-        return false;
-      }
-      if (reportStatusFilter === 'pending' && t.status !== 'pending') {
-        return false;
-      }
-
-      return true;
-    });
-  }, [tasks, reportRangeInfo, reportStatusFilter]);
-
-  // Report Stats for the selected period
-  const reportStats = useMemo(() => {
-    let total = reportTasks.length;
-    let approvedCount = 0;
-    let inProgressCount = 0;
-    let pendingCount = 0;
-    let pendingApprovalCount = 0;
-    let totalApprovedIncentive = 0;
-    let totalPotentialIncentive = 0;
-
-    reportTasks.forEach((t) => {
-      const inc = t.incentiveAmount || 0;
-      totalPotentialIncentive += inc;
-
-      if (t.approvalStatus === 'approved') {
-        approvedCount++;
-        totalApprovedIncentive += inc;
-      } else if (t.status === 'completed' && t.approvalStatus === 'pending_approval') {
-        pendingApprovalCount++;
-      } else if (t.status === 'in_progress') {
-        inProgressCount++;
-      } else if (t.status === 'pending') {
-        pendingCount++;
-      }
-    });
-
-    return {
-      total,
-      approvedCount,
-      inProgressCount,
-      pendingCount,
-      pendingApprovalCount,
-      totalApprovedIncentive,
-      totalPotentialIncentive
-    };
-  }, [reportTasks]);
 
   // Member updates status: "পেন্ডিং" or "চলমান"
   const handleSetSimpleStatus = async (task: Task, newStatus: 'pending' | 'in_progress') => {
@@ -344,65 +249,6 @@ export const UserDashboard: React.FC = () => {
     }
   };
 
-  // PDF Generator for Member Individual Report
-  const handleDownloadReportPDF = async () => {
-    if (!reportPrintRef.current) return;
-    setIsGeneratingPdf(true);
-    setPdfSuccessMessage(null);
-
-    try {
-      // Allow DOM to settle
-      await new Promise((resolve) => setTimeout(resolve, 250));
-
-      const element = reportPrintRef.current;
-      const width = element.offsetWidth || 800;
-      const height = element.offsetHeight || element.scrollHeight || 1000;
-
-      const canvas = await toCanvas(element, {
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
-        skipFonts: true,
-        width,
-        height
-      });
-
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageWidth = 210;
-      const pageHeight = 297;
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      // First page
-      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pageHeight;
-
-      // Additional pages if needed
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageHeight;
-      }
-
-      const memberNameClean = (profile?.name || user?.displayName || 'Member').replace(/\s+/g, '_');
-      const periodLabelClean = reportPeriod.replace('_', '-');
-      const fileName = `Kajer_Report_${memberNameClean}_${periodLabelClean}_${getTodayDateString()}.pdf`;
-
-      pdf.save(fileName);
-      setPdfSuccessMessage('আপনার কাজের ব্যক্তিগত রিপোর্ট সফলভাবে PDF আকারে ডাউনলোড হয়েছে!');
-      setTimeout(() => setPdfSuccessMessage(null), 5000);
-    } catch (err) {
-      console.error('Member PDF Generation Error:', err);
-      alert('পিডিএফ রিপোর্ট তৈরি করার সময় সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।');
-    } finally {
-      setIsGeneratingPdf(false);
-    }
-  };
-
   const monthOptions = getPastMonthsOptions(12);
 
   return (
@@ -438,55 +284,26 @@ export const UserDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* PDF Success Banner */}
-      {pdfSuccessMessage && (
-        <div className="p-4 rounded-2xl bg-emerald-600 text-white text-xs font-semibold flex items-center justify-between gap-3 shadow-md animate-fade-in">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-emerald-200 shrink-0" />
-            <span>{pdfSuccessMessage}</span>
-          </div>
-          <button
-            onClick={() => setPdfSuccessMessage(null)}
-            className="text-white hover:text-emerald-200 transition"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-
       {/* Welcome Banner */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-6 sm:p-7 rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 text-white shadow-xl shadow-emerald-950/10">
-        <div className="space-y-1.5">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 backdrop-blur-md">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-3xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 text-white shadow-xl shadow-emerald-950/10">
+        <div>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/20 backdrop-blur-md mb-2">
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
             স্বাগতম, {profile?.name || user?.displayName || 'সদস্য'}
           </span>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
             আপনার অ্যাসাইন করা কাজের তালিকা ও অগ্রগতি
           </h1>
-          <p className="text-emerald-100 text-xs sm:text-sm">
-            অ্যাডমিন থেকে পাওয়া কাজগুলোর বর্তমান অবস্থা (পেন্ডিং / চলমান / সম্পূর্ণ) আপডেট করুন ও কাজের রিপোর্ট ডাউনলোড করুন
+          <p className="text-emerald-100 text-xs sm:text-sm mt-1">
+            অ্যাডমিন থেকে পাওয়া কাজগুলোর বর্তমান অবস্থা (পেন্ডিং / চলমান / সম্পূর্ণ) আপডেট করুন
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
-          <div className="px-4 py-3 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-xs space-y-1">
-            <p className="text-emerald-100 font-medium">বিভাগ:</p>
-            <p className="text-sm font-bold text-white">
-              {profile?.department === 'graphic' ? '🎨 গ্রাফিক ডিজাইন' : '🎬 ভিডিও এডিটিং ও প্রোডাকশন'}
-            </p>
-          </div>
-
-          {/* Individual Report Download Button */}
-          <button
-            type="button"
-            onClick={() => setShowReportModal(true)}
-            className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-white hover:bg-emerald-50 text-emerald-900 font-bold text-xs shadow-lg transition active:scale-95 cursor-pointer shrink-0"
-          >
-            <FileText className="w-4 h-4 text-emerald-600" />
-            <span>ব্যক্তিগত কাজের PDF রিপোর্ট</span>
-            <Download className="w-3.5 h-3.5 text-emerald-600" />
-          </button>
+        <div className="px-4 py-3 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 text-xs space-y-1 shrink-0">
+          <p className="text-emerald-100 font-medium">বিভাগ:</p>
+          <p className="text-sm font-bold text-white">
+            {profile?.department === 'graphic' ? '🎨 গ্রাফিক ডিজাইন' : '🎬 ভিডিও এডিটিং ও প্রোডাকশন'}
+          </p>
         </div>
       </div>
 
@@ -534,7 +351,7 @@ export const UserDashboard: React.FC = () => {
           <p className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">
             {toBengaliNumber(stats.pendingApproval)}
           </p>
-          <span className="text-[11px] text-slate-400">জমা দেওয়া হয়েছে</span>
+          <span className="text-[11px] text-slate-400">জমা দেওয়া হয়েছে</span>
         </div>
 
         {/* সম্পন্ন হওয়া কাজ */}
@@ -601,16 +418,6 @@ export const UserDashboard: React.FC = () => {
                   ))}
               </select>
             </div>
-
-            {/* Quick Report Download Trigger */}
-            <button
-              onClick={() => setShowReportModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 text-xs font-semibold transition"
-              title="ব্যক্তিগত কাজের মাসিক বা বাৎসরিক PDF রিপোর্ট তৈরি করুন"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>PDF রিপোর্ট</span>
-            </button>
 
             {/* Status Filter */}
             <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
@@ -714,71 +521,81 @@ export const UserDashboard: React.FC = () => {
                     : 'border-slate-200 dark:border-slate-800'
                 }`}
               >
-                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
-                  {/* Left: Task Details */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Left: Task Info */}
                   <div className="space-y-2 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {/* Category Badge */}
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                         {task.categoryName}
                       </span>
 
-                      {/* Approval / Progress Status Badge */}
+                      {/* Status Badges */}
                       {isApproved ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300">
-                          <CheckCircle2 className="w-3 h-3" />
-                          সম্পন্ন হয়েছে (অনুমোদিত)
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          সম্পন্ন হওয়া কাজ
                         </span>
                       ) : isPendingApproval ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300">
-                          <Clock className="w-3 h-3" />
-                          অনুমোদনের জন্য পাঠানো হয়েছে
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800 animate-pulse">
+                          <Clock className="w-3.5 h-3.5" />
+                          অ্যাডমিন অনুমোদনের অপেক্ষায়
                         </span>
                       ) : isRevision ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-100 dark:bg-red-950/60 text-red-800 dark:text-red-300">
-                          <AlertCircle className="w-3 h-3" />
-                          ⚠️ সংশোধনের জন্য এসেছে
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300 border border-red-300 dark:border-red-800">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          সংশোধন প্রয়োজন
                         </span>
                       ) : task.status === 'in_progress' ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300">
-                          <Clock className="w-3 h-3" />
-                          চলমান
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                          ⚡ কাজ চলমান
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
-                          <Clock className="w-3 h-3" />
-                          পেন্ডিং
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                          ⏳ অপেক্ষমাণ (পেন্ডিং)
                         </span>
                       )}
 
                       {/* Overdue Warning */}
                       {overdueInfo.isOverdue && !isApproved && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300">
-                          <AlertCircle className="w-3 h-3" />
-                          {toBengaliNumber(overdueInfo.daysOverdue)} দিন অতিক্রান্ত
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          ডেডলাইন পার হয়েছে ({toBengaliNumber(overdueInfo.daysOverdue)} দিন বিলম্ব)
                         </span>
                       )}
+
+                      {/* Incentive Badge */}
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                        <Coins className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        ইনসেনটিভ: {formatBengaliCurrency(task.incentiveAmount)}
+                      </span>
                     </div>
 
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                    {/* Task Title */}
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white leading-snug">
                       {task.name}
                     </h3>
 
-                    {/* Metadata: Dates & Incentive */}
+                    {/* Assigned by Admin & Dates */}
                     <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
-                      {task.workDate && (
-                        <span>
-                          <strong>কাজের তারিখ:</strong> {formatBengaliDate(task.workDate)}
+                      {task.createdByEmail && (
+                        <span className="inline-flex items-center gap-1 text-slate-700 dark:text-slate-300 font-medium">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                          অ্যাসাইন করেছেন: <strong>{task.createdByName || task.createdByEmail}</strong>
                         </span>
                       )}
-                      {task.dueDate && (
-                        <span>
-                          <strong>জমা দেওয়ার শেষ সময়:</strong> {formatBengaliDate(task.dueDate)}
-                        </span>
-                      )}
-                      <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
-                        <Coins className="w-3.5 h-3.5" />
-                        ইনসেনটিভ: {formatBengaliCurrency(task.incentiveAmount)}
+
+                      <span>
+                        শুরু: <strong>{formatBengaliDate(task.workDate)}</strong>
                       </span>
+                      <span>
+                        ডেডলাইন: <strong className={overdueInfo.isOverdue && !isApproved ? 'text-red-600 dark:text-red-400' : ''}>{formatBengaliDate(task.dueDate)}</strong>
+                      </span>
+                      {task.submitDate && (
+                        <span className="text-emerald-700 dark:text-emerald-400">
+                          জমা দিয়েছেন: <strong>{formatBengaliDate(task.submitDate)}</strong>
+                        </span>
+                      )}
                     </div>
 
                     {/* Admin Instructions or Note */}
@@ -799,7 +616,7 @@ export const UserDashboard: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Who approved it */}
+                    {/* Who approved it (CRITICAL USER REQUIREMENT) */}
                     {isApproved && task.approvedByEmail && (
                       <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
                         <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -858,7 +675,7 @@ export const UserDashboard: React.FC = () => {
                         } disabled:opacity-50`}
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        {isApproved ? 'অনুমোদিত' : isPendingApproval ? 'জমা দেওয়া হয়েছে' : 'সম্পূর্ণ হয়েছে'}
+                        {isApproved ? 'অনুমোদিত' : isPendingApproval ? 'জমা দেওয়া হয়েছে' : 'সম্পূর্ণ হয়েছে'}
                       </button>
                     </div>
                   </div>
@@ -922,706 +739,13 @@ export const UserDashboard: React.FC = () => {
                   className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition disabled:opacity-50 flex items-center justify-center gap-1.5"
                 >
                   <Send className="w-3.5 h-3.5" />
-                  {isSubmittingTask ? 'জমা দেওয়া হচ্ছে...' : 'অনুমোদনের জন্য জমা দিন'}
+                  {isSubmittingTask ? 'জমা দেওয়া হচ্ছে...' : 'অনুমোদনের জন্য জমা দিন'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
-      {/* =========================================================================
-          INDIVIDUAL PDF REPORT MODAL (REQUIREMENT 5: ১ মাস, ২ মাস, ১ বছর বাৎসরিক PDF)
-      ========================================================================= */}
-      {showReportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm overflow-y-auto">
-          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-7 space-y-5 animate-fade-in my-8">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                  <FileText className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
-                    ব্যক্তিগত কাজের PDF রিপোর্ট ডাউনলোড
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    আপনার সম্পন্ন ও চলমান কাজের বিস্তারিত রিপোর্ট মাসিক বা বাৎসরিক মেয়াদে ডাউনলোড করুন
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowReportModal(false)}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Member Profile Summary */}
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-emerald-600 text-white font-bold flex items-center justify-center text-xs">
-                  {(profile?.name || user?.displayName || 'M')[0]}
-                </div>
-                <div>
-                  <p className="font-bold text-slate-900 dark:text-white">
-                    {profile?.name || user?.displayName}
-                  </p>
-                  <p className="text-slate-500 dark:text-slate-400 text-[11px]">
-                    {user?.email}
-                  </p>
-                </div>
-              </div>
-              <span className="px-3 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold text-[11px]">
-                {profile?.department === 'graphic' ? '🎨 গ্রাফিক ডিজাইন' : '🎬 ভিডিও এডিটিং'}
-              </span>
-            </div>
-
-            {/* Period Selection Controls */}
-            <div className="space-y-3">
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
-                রিপোর্টের সময়কাল বা মেয়াদ নির্বাচন করুন:
-              </label>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setReportPeriod('1_month')}
-                  className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
-                    reportPeriod === '1_month'
-                      ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
-                  }`}
-                >
-                  <span className="block font-bold">১ মাসের রিপোর্ট</span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">বিগত ১ মাস</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setReportPeriod('2_months')}
-                  className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
-                    reportPeriod === '2_months'
-                      ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
-                  }`}
-                >
-                  <span className="block font-bold">২ মাসের রিপোর্ট</span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">বিগত ২ মাস</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setReportPeriod('3_months')}
-                  className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
-                    reportPeriod === '3_months'
-                      ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
-                  }`}
-                >
-                  <span className="block font-bold">৩ মাসের রিপোর্ট</span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">বিগত ৩ মাস / ত্রৈমাসিক</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setReportPeriod('5_months')}
-                  className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
-                    reportPeriod === '5_months'
-                      ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
-                  }`}
-                >
-                  <span className="block font-bold">৫ মাসের রিপোর্ট</span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">বিগত ৫ মাস</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setReportPeriod('1_year')}
-                  className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
-                    reportPeriod === '1_year'
-                      ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
-                  }`}
-                >
-                  <span className="block font-bold">১ বছরের রিপোর্ট (বাৎসরিক)</span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">বিগত ১২ মাস</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setReportPeriod('all')}
-                  className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
-                    reportPeriod === 'all'
-                      ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-500/20'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
-                  }`}
-                >
-                  <span className="block font-bold">সম্পূর্ণ সময় (All-Time)</span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">শুরু থেকে আজ পর্যন্ত</span>
-                </button>
-              </div>
-
-              {/* Custom Date Range Picker */}
-              <div className="pt-1">
-                <button
-                  type="button"
-                  onClick={() => setReportPeriod('custom')}
-                  className={`text-xs font-semibold inline-flex items-center gap-1.5 transition ${
-                    reportPeriod === 'custom'
-                      ? 'text-emerald-600 dark:text-emerald-400 font-bold underline'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
-                >
-                  <CalendarRange className="w-3.5 h-3.5" />
-                  <span>অথবা নির্দিষ্ট কাস্টম তারিখ সীমা বেছে নিন</span>
-                </button>
-
-                {reportPeriod === 'custom' && (
-                  <div className="mt-2 p-3 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs animate-fade-in">
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1">
-                        শুরুর তারিখ:
-                      </label>
-                      <input
-                        type="date"
-                        value={customStartDate}
-                        onChange={(e) => setCustomStartDate(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-600 dark:text-slate-400 mb-1">
-                        শেষ তারিখ:
-                      </label>
-                      <input
-                        type="date"
-                        value={customEndDate}
-                        onChange={(e) => setCustomEndDate(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-800 dark:text-white"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Status Filter for Report */}
-            <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                কাজের ধরন বা স্ট্যাটাস:
-              </label>
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setReportStatusFilter('all')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    reportStatusFilter === 'all'
-                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                  }`}
-                >
-                  সকল কাজ ({toBengaliNumber(tasks.length)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReportStatusFilter('completed')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    reportStatusFilter === 'completed'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100'
-                  }`}
-                >
-                  শুধু সম্পন্ন কাজ ({toBengaliNumber(stats.approved)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReportStatusFilter('in_progress')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    reportStatusFilter === 'in_progress'
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 hover:bg-blue-100'
-                  }`}
-                >
-                  চলমান কাজ ({toBengaliNumber(stats.inProgress)})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setReportStatusFilter('pending')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition ${
-                    reportStatusFilter === 'pending'
-                      ? 'bg-amber-500 text-white shadow-xs'
-                      : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100'
-                  }`}
-                >
-                  পেন্ডিং কাজ ({toBengaliNumber(stats.pending)})
-                </button>
-              </div>
-            </div>
-
-            {/* Live Preview Metrics for this Report */}
-            <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/80 space-y-3">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold text-emerald-900 dark:text-emerald-200">
-                  {reportRangeInfo.label}
-                </span>
-                <span className="text-slate-500 dark:text-slate-400">
-                  {formatBengaliDate(reportRangeInfo.startDate)} হতে {formatBengaliDate(reportRangeInfo.endDate)}
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-emerald-100 dark:border-slate-700 text-center">
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">নির্বাচিত কাজের সংখ্যা</p>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
-                    {toBengaliNumber(reportStats.total)} টি
-                  </p>
-                </div>
-                <div className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-emerald-100 dark:border-slate-700 text-center">
-                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">সম্পন্ন হওয়া কাজ</p>
-                  <p className="text-lg font-bold text-emerald-700 dark:text-emerald-300 mt-0.5">
-                    {toBengaliNumber(reportStats.approvedCount)} টি
-                  </p>
-                </div>
-                <div className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-emerald-100 dark:border-slate-700 text-center">
-                  <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">চলমান / অপেক্ষমাণ</p>
-                  <p className="text-lg font-bold text-blue-700 dark:text-blue-300 mt-0.5">
-                    {toBengaliNumber(reportStats.inProgressCount + reportStats.pendingApprovalCount)} টি
-                  </p>
-                </div>
-                <div className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-emerald-100 dark:border-slate-700 text-center">
-                  <p className="text-[10px] text-emerald-800 dark:text-emerald-300 font-bold">মোট অনুমোদিত ইনসেনটিভ</p>
-                  <p className="text-lg font-extrabold text-emerald-700 dark:text-emerald-300 mt-0.5">
-                    {formatBengaliCurrency(reportStats.totalApprovedIncentive)}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => setShowReportModal(false)}
-                disabled={isGeneratingPdf}
-                className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
-              >
-                বন্ধ করুন
-              </button>
-              <button
-                type="button"
-                onClick={handleDownloadReportPDF}
-                disabled={isGeneratingPdf || reportTasks.length === 0}
-                className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md transition disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer active:scale-95"
-              >
-                {isGeneratingPdf ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>পিডিএফ তৈরি হচ্ছে...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    <span>পিডিএফ রিপোর্ট ডাউনলোড করুন</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================================
-          HIDDEN PRINTABLE CONTAINER FOR MEMBER INDIVIDUAL PDF
-          Using pure inline CSS and standard HEX colors (#ffffff, #0f172a, etc.)
-          to completely prevent any html2canvas / oklch color parsing errors!
-      ========================================================================= */}
-      <div
-        style={{
-          position: 'absolute',
-          left: '-9999px',
-          top: '-9999px',
-          width: '800px',
-          zIndex: -100
-        }}
-        aria-hidden="true"
-      >
-        <div
-          ref={reportPrintRef}
-          style={{
-            width: '800px',
-            backgroundColor: '#ffffff',
-            color: '#0f172a',
-            padding: '36px',
-            fontFamily:
-              'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Bengali", sans-serif',
-            boxSizing: 'border-box'
-          }}
-        >
-          {/* Header */}
-          <div
-            style={{
-              borderBottom: '2px solid #059669',
-              paddingBottom: '20px',
-              marginBottom: '24px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'flex-start'
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: '24px',
-                  fontWeight: 'bold',
-                  color: '#059669',
-                  marginBottom: '4px'
-                }}
-              >
-                কাজের হিসাব — সদস্যের ব্যক্তিগত কাজের রিপোর্ট
-              </div>
-              <div style={{ fontSize: '12px', color: '#64748b' }}>
-                সদস্যের অর্জিত কাজের বিবরণী ও ইনসেনটিভ হিসাব
-              </div>
-            </div>
-
-            <div style={{ textAlign: 'right', fontSize: '11px', color: '#64748b' }}>
-              <div>রিপোর্ট তৈরির তারিখ: {formatBengaliDate(getTodayDateString())}</div>
-              <div style={{ fontWeight: 'bold', color: '#0f172a', marginTop: '4px' }}>
-                {reportRangeInfo.label}
-              </div>
-            </div>
-          </div>
-
-          {/* Member Profile Block */}
-          <div
-            style={{
-              backgroundColor: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: '12px',
-              padding: '16px 20px',
-              marginBottom: '24px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}
-          >
-            <div>
-              <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                সদস্যের নাম ও তথ্য
-              </div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#0f172a', marginTop: '2px' }}>
-                {profile?.name || user?.displayName}
-              </div>
-              <div style={{ fontSize: '12px', color: '#475569', marginTop: '2px' }}>
-                ইমেইল: {user?.email}
-              </div>
-            </div>
-
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                বিভাগ / ডিপার্টমেন্ট
-              </div>
-              <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#059669', marginTop: '2px' }}>
-                {profile?.department === 'graphic' ? 'গ্রাফিক ডিজাইন' : 'ভিডিও এডিটিং'}
-              </div>
-              <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
-                তারিখ সীমা: {formatBengaliDate(reportRangeInfo.startDate)} হতে {formatBengaliDate(reportRangeInfo.endDate)}
-              </div>
-            </div>
-          </div>
-
-          {/* Report Summary Metric Cards */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: '12px',
-              marginBottom: '24px'
-            }}
-          >
-            <div
-              style={{
-                backgroundColor: '#f8fafc',
-                border: '1px solid #e2e8f0',
-                borderRadius: '8px',
-                padding: '12px',
-                textAlign: 'center'
-              }}
-            >
-              <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>
-                মোট অ্যাসাইন কাজ
-              </div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#0f172a', marginTop: '4px' }}>
-                {toBengaliNumber(reportStats.total)} টি
-              </div>
-            </div>
-
-            <div
-              style={{
-                backgroundColor: '#eff6ff',
-                border: '1px solid #bfdbfe',
-                borderRadius: '8px',
-                padding: '12px',
-                textAlign: 'center'
-              }}
-            >
-              <div style={{ fontSize: '11px', color: '#2563eb', fontWeight: '600' }}>
-                চলমান কাজ
-              </div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1d4ed8', marginTop: '4px' }}>
-                {toBengaliNumber(reportStats.inProgressCount)} টি
-              </div>
-            </div>
-
-            <div
-              style={{
-                backgroundColor: '#ecfdf5',
-                border: '1px solid #a7f3d0',
-                borderRadius: '8px',
-                padding: '12px',
-                textAlign: 'center'
-              }}
-            >
-              <div style={{ fontSize: '11px', color: '#059669', fontWeight: '600' }}>
-                সম্পন্ন হওয়া কাজ
-              </div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#047857', marginTop: '4px' }}>
-                {toBengaliNumber(reportStats.approvedCount)} টি
-              </div>
-            </div>
-
-            <div
-              style={{
-                backgroundColor: '#f0fdf4',
-                border: '1px solid #86efac',
-                borderRadius: '8px',
-                padding: '12px',
-                textAlign: 'center'
-              }}
-            >
-              <div style={{ fontSize: '11px', color: '#15803d', fontWeight: '600' }}>
-                মোট অর্জিত ইনসেনটিভ
-              </div>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#166534', marginTop: '4px' }}>
-                {formatBengaliCurrency(reportStats.totalApprovedIncentive)}
-              </div>
-            </div>
-          </div>
-
-          {/* Table Header & Content */}
-          <div style={{ marginBottom: '32px' }}>
-            <table
-              style={{
-                width: '100%',
-                borderCollapse: 'collapse',
-                fontSize: '11px',
-                textAlign: 'left'
-              }}
-            >
-              <thead>
-                <tr style={{ backgroundColor: '#059669', color: '#ffffff' }}>
-                  <th style={{ padding: '8px 10px', border: '1px solid #047857', width: '35px', textAlign: 'center' }}>#</th>
-                  <th style={{ padding: '8px 10px', border: '1px solid #047857' }}>কাজের নাম</th>
-                  <th style={{ padding: '8px 10px', border: '1px solid #047857', width: '120px' }}>ক্যাটাগরি</th>
-                  <th style={{ padding: '8px 10px', border: '1px solid #047857', width: '90px' }}>তারিখ</th>
-                  <th style={{ padding: '8px 10px', border: '1px solid #047857', width: '85px', textAlign: 'center' }}>স্ট্যাটাস</th>
-                  <th style={{ padding: '8px 10px', border: '1px solid #047857', width: '95px', textAlign: 'right' }}>ইনসেনটিভ</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reportTasks.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      style={{
-                        padding: '24px',
-                        textAlign: 'center',
-                        color: '#64748b',
-                        border: '1px solid #e2e8f0'
-                      }}
-                    >
-                      এই সময়সীমার মধ্যে কোনো কাজ পাওয়া যায়নি।
-                    </td>
-                  </tr>
-                ) : (
-                  reportTasks.map((t, idx) => {
-                    const isApproved = t.approvalStatus === 'approved';
-                    const isPendingApproval = t.status === 'completed' && t.approvalStatus === 'pending_approval';
-
-                    let statusText = 'পেন্ডিং';
-                    let statusBg = '#fffbeb';
-                    let statusColor = '#b45309';
-
-                    if (isApproved) {
-                      statusText = 'সম্পন্ন (অনুমোদিত)';
-                      statusBg = '#ecfdf5';
-                      statusColor = '#047857';
-                    } else if (isPendingApproval) {
-                      statusText = 'অনুমোদনের অপেক্ষায়';
-                      statusBg = '#faf5ff';
-                      statusColor = '#6b21a8';
-                    } else if (t.status === 'in_progress') {
-                      statusText = 'চলমান';
-                      statusBg = '#eff6ff';
-                      statusColor = '#1d4ed8';
-                    } else if (t.approvalStatus === 'rejected') {
-                      statusText = 'সংশোধনে';
-                      statusBg = '#fef2f2';
-                      statusColor = '#b91c1c';
-                    }
-
-                    return (
-                      <tr
-                        key={t.id}
-                        style={{
-                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
-                          borderBottom: '1px solid #e2e8f0'
-                        }}
-                      >
-                        <td
-                          style={{
-                            padding: '8px 10px',
-                            border: '1px solid #e2e8f0',
-                            textAlign: 'center',
-                            color: '#64748b'
-                          }}
-                        >
-                          {toBengaliNumber(idx + 1)}
-                        </td>
-                        <td
-                          style={{
-                            padding: '8px 10px',
-                            border: '1px solid #e2e8f0',
-                            fontWeight: '600',
-                            color: '#0f172a'
-                          }}
-                        >
-                          {t.name}
-                        </td>
-                        <td
-                          style={{
-                            padding: '8px 10px',
-                            border: '1px solid #e2e8f0',
-                            color: '#475569'
-                          }}
-                        >
-                          {t.categoryName}
-                        </td>
-                        <td
-                          style={{
-                            padding: '8px 10px',
-                            border: '1px solid #e2e8f0',
-                            color: '#475569'
-                          }}
-                        >
-                          {t.workDate ? formatBengaliDate(t.workDate) : '—'}
-                        </td>
-                        <td
-                          style={{
-                            padding: '8px 10px',
-                            border: '1px solid #e2e8f0',
-                            textAlign: 'center'
-                          }}
-                        >
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '2px 6px',
-                              borderRadius: '4px',
-                              fontSize: '10px',
-                              fontWeight: 'bold',
-                              backgroundColor: statusBg,
-                              color: statusColor
-                            }}
-                          >
-                            {statusText}
-                          </span>
-                        </td>
-                        <td
-                          style={{
-                            padding: '8px 10px',
-                            border: '1px solid #e2e8f0',
-                            textAlign: 'right',
-                            fontWeight: 'bold',
-                            color: isApproved ? '#047857' : '#64748b'
-                          }}
-                        >
-                          {formatBengaliCurrency(t.incentiveAmount)}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-              <tfoot>
-                <tr style={{ backgroundColor: '#f1f5f9', fontWeight: 'bold' }}>
-                  <td
-                    colSpan={5}
-                    style={{
-                      padding: '10px',
-                      border: '1px solid #cbd5e1',
-                      textAlign: 'right',
-                      color: '#0f172a'
-                    }}
-                  >
-                    মোট অর্জিত ইনসেনটিভ (অনুমোদিত কাজসমূহ):
-                  </td>
-                  <td
-                    style={{
-                      padding: '10px',
-                      border: '1px solid #cbd5e1',
-                      textAlign: 'right',
-                      fontSize: '13px',
-                      color: '#059669'
-                    }}
-                  >
-                    {formatBengaliCurrency(reportStats.totalApprovedIncentive)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-          {/* Signature & Disclaimer Footer */}
-          <div
-            style={{
-              marginTop: '40px',
-              paddingTop: '24px',
-              borderTop: '1px dashed #cbd5e1',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'flex-end',
-              fontSize: '11px',
-              color: '#64748b'
-            }}
-          >
-            <div style={{ textAlign: 'center', width: '180px' }}>
-              <div style={{ borderBottom: '1px solid #94a3b8', paddingBottom: '30px' }} />
-              <div style={{ marginTop: '6px', fontWeight: 'bold', color: '#0f172a' }}>
-                সদস্যের স্বাক্ষর
-              </div>
-              <div>{profile?.name || user?.displayName}</div>
-            </div>
-
-            <div style={{ textAlign: 'center', fontSize: '10px', color: '#94a3b8' }}>
-              <div>সিস্টেম জেনারেটেড রিপোর্ট • কাজের হিসাব অ্যাপ্লিকেশন</div>
-              <div>https://kajer-hishab.app</div>
-            </div>
-
-            <div style={{ textAlign: 'center', width: '180px' }}>
-              <div style={{ borderBottom: '1px solid #94a3b8', paddingBottom: '30px' }} />
-              <div style={{ marginTop: '6px', fontWeight: 'bold', color: '#0f172a' }}>
-                বিভাগীয় প্রধান / অ্যাডমিনের স্বাক্ষর
-              </div>
-              <div>অনুমোদিত কর্তৃপক্ষ</div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
