@@ -19,7 +19,7 @@ import { useAuth } from '../context/AuthContext';
 import { Department } from '../types';
 
 export const LoginScreen: React.FC = () => {
-  const { signInWithGoogle, signInWithEmail, signUpWithEmail, quickLogin } = useAuth();
+  const { signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [authMethod, setAuthMethod] = useState<'google' | 'email'>('google');
 
@@ -40,36 +40,14 @@ export const LoginScreen: React.FC = () => {
     try {
       await signInWithGoogle();
     } catch (err: unknown) {
-      console.warn('Google auth handled in LoginScreen:', err);
-      const raw = err instanceof Error ? err.message : String(err);
-      if (raw.includes('network-request-failed') || raw.includes('popup-closed') || raw.includes('unauthorized-domain')) {
-        setErrorMsg(
-          'আইফ্রেম বা ব্রাউজারের সিকিউরিটি পলিসির কারণে গুগল পপআপ ব্লক হয়েছে। অনুগ্রহ করে নিচের "এক-ক্লিকে টেস্ট লগইন" অথবা "ইমেইল ও পাসওয়ার্ড" ব্যবহার করুন।'
-        );
-      } else {
-        setErrorMsg('গুগল প্রমাণীকরণ সম্পন্ন করা যায়নি। অনুগ্রহ করে নিচে দেওয়া এক-ক্লিকে টেস্ট লগইন ব্যবহার করুন।');
-      }
+      console.error(err);
+      setErrorMsg('গুগল প্রমাণীকরণ সম্পন্ন করা যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।');
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. Quick One-Click Login Handler
-  const handleQuickLogin = async (targetEmail: string, defaultName: string, dept: Department) => {
-    setLoading(true);
-    setErrorMsg(null);
-    try {
-      await quickLogin(targetEmail, defaultName, dept);
-    } catch (err: unknown) {
-      console.warn('Quick login handled:', err);
-      const raw = err instanceof Error ? err.message : String(err);
-      setErrorMsg(raw || 'তাৎক্ষণিক লগইন সম্পন্ন করা যায়নি। ম্যানুয়ালি ইমেইল ও পাসওয়ার্ড ব্যবহার করুন।');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // 3. Email Sign In / Sign Up Handler
+  // 2. Email Sign In / Sign Up Handler
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -98,7 +76,7 @@ export const LoginScreen: React.FC = () => {
         await signUpWithEmail(name, email, password, department);
       }
     } catch (err: unknown) {
-      console.warn('Email auth notice:', err);
+      console.error(err);
       const raw = err instanceof Error ? err.message : String(err);
       if (raw.includes('user-not-found') || raw.includes('wrong-password') || raw.includes('invalid-credential')) {
         setErrorMsg('ইমেইল বা পাসওয়ার্ড সঠিক নয়।');
@@ -214,84 +192,10 @@ export const LoginScreen: React.FC = () => {
             </span>
           </button>
 
-          {/* Quick Instant Logins */}
-          <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 text-left space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>এক-ক্লিকে তাৎক্ষণিক লগইন</span>
-              </span>
-              <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold bg-emerald-100/70 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                টেস্ট একাউন্ট
-              </span>
-            </div>
-
-            <div className="space-y-1.5">
-              {/* Primary Admin: whitepenguin110@gmail.com */}
-              <button
-                type="button"
-                disabled={loading}
-                onClick={() => handleQuickLogin('whitepenguin110@gmail.com', 'প্রধান অ্যাডমিন', 'graphic')}
-                className="w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-xs hover:shadow transition text-left group disabled:opacity-50"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-white/20 flex items-center justify-center shrink-0">
-                    <ShieldCheck className="w-3.5 h-3.5 text-white" />
-                  </div>
-                  <div className="truncate">
-                    <div className="text-xs font-bold leading-tight">অ্যাডমিন হিসেবে লগইন</div>
-                    <div className="text-[10px] text-emerald-100 truncate">whitepenguin110@gmail.com</div>
-                  </div>
-                </div>
-                <span className="text-[10px] bg-white/20 text-white font-semibold px-2 py-0.5 rounded-md shrink-0">
-                  প্রধান অ্যাডমিন
-                </span>
-              </button>
-
-              <div className="grid grid-cols-2 gap-1.5">
-                {/* Graphic Designer Member */}
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleQuickLogin('rahim.designer@gmail.com', 'মোঃ রহিম (গ্রাফিক)', 'graphic')}
-                  className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 shadow-2xs transition text-left disabled:opacity-50"
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <div className="w-5 h-5 rounded-md bg-pink-100 dark:bg-pink-950/60 text-pink-600 dark:text-pink-400 flex items-center justify-center shrink-0">
-                      <Palette className="w-3 h-3" />
-                    </div>
-                    <div className="truncate">
-                      <div className="text-[11px] font-semibold leading-tight truncate">গ্রাফিক সদস্য</div>
-                      <div className="text-[9px] text-slate-500 truncate">rahim.designer</div>
-                    </div>
-                  </div>
-                </button>
-
-                {/* Video Editor Member */}
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={() => handleQuickLogin('karim.editor@gmail.com', 'মোঃ করিম (ভিডিও)', 'video')}
-                  className="flex items-center justify-between p-2 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 shadow-2xs transition text-left disabled:opacity-50"
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <div className="w-5 h-5 rounded-md bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-                      <Video className="w-3 h-3" />
-                    </div>
-                    <div className="truncate">
-                      <div className="text-[11px] font-semibold leading-tight truncate">ভিডিও সদস্য</div>
-                      <div className="text-[9px] text-slate-500 truncate">karim.editor</div>
-                    </div>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </div>
-
           <div className="relative flex items-center justify-center my-3">
             <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
             <span className="bg-white dark:bg-slate-900 px-3 text-[11px] text-slate-400 absolute">
-              অথবা ইমেইল ও নিজস্ব পাসওয়ার্ড
+              অথবা ইমেইল ও পাসওয়ার্ড
             </span>
           </div>
         </div>

@@ -48,7 +48,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
       await updateUserName(name.trim());
       setNameFeedback({ type: 'success', text: 'নাম সফলভাবে হালনাগাদ করা হয়েছে!' });
     } catch (err: unknown) {
-      console.warn('Profile name update notice:', err);
+      console.error(err);
       setNameFeedback({ type: 'error', text: 'নাম পরিবর্তন করা সম্ভব হয়নি।' });
     } finally {
       setIsUpdatingName(false);
@@ -74,7 +74,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
       setNewPassword('');
       setConfirmPassword('');
     } catch (err: unknown) {
-      console.warn('Password change notice:', err);
+      console.error(err);
       const errMsg = err instanceof Error ? err.message : String(err);
       if (errMsg.includes('requires-recent-login')) {
         setPasswordFeedback({

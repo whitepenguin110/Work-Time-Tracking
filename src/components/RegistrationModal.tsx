@@ -21,7 +21,7 @@ export const RegistrationModal: React.FC = () => {
     try {
       await registerProfile(name, department);
     } catch (err: unknown) {
-      console.warn('Registration modal error handled:', err);
+      console.error(err);
       setErrorMsg('নিবন্ধন সম্পন্ন করা যায়নি। অনুগ্রহ করে পুনরায় চেষ্টা করুন।');
       setIsSubmitting(false);
     }
