@@ -136,14 +136,22 @@ export const AdminAllTasksReport: React.FC = () => {
     return users.find((u) => u.id === selectedMemberUid) || null;
   }, [selectedMemberUid, users]);
 
-  // Filter tasks based on all criteria
-  const filteredTasks = useMemo(() => {
-    return tasks.filter((t) => {
+  // Filter tasks based on all criteria and compute stats in a single pass
+  const { filteredTasks, stats } = useMemo(() => {
+    const filtered: typeof tasks = [];
+    let inProgressCount = 0;
+    let pendingCount = 0;
+    let pendingApprovalCount = 0;
+    let completedApprovedCount = 0;
+    let totalIncentive = 0;
+
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
       // 1. Date filter (workDate or submitDate or createdAt)
       const taskDate = t.workDate || (t.createdAt ? t.createdAt.slice(0, 10) : '');
       if (taskDate) {
         if (taskDate < periodInfo.startDate || taskDate > periodInfo.endDate) {
-          return false;
+          continue;
         }
       }
 
@@ -151,25 +159,25 @@ export const AdminAllTasksReport: React.FC = () => {
       if (selectedMemberUid !== 'all') {
         const matchesMember =
           t.assignedToUid === selectedMemberUid || t.ownerUid === selectedMemberUid;
-        if (!matchesMember) return false;
+        if (!matchesMember) continue;
       }
 
       // 3. Status filter
       if (selectedStatus !== 'all') {
-        if (selectedStatus === 'in_progress' && t.status !== 'in_progress') return false;
-        if (selectedStatus === 'pending' && t.status !== 'pending') return false;
+        if (selectedStatus === 'in_progress' && t.status !== 'in_progress') continue;
+        if (selectedStatus === 'pending' && t.status !== 'pending') continue;
         if (selectedStatus === 'pending_approval' && t.approvalStatus !== 'pending_approval')
-          return false;
+          continue;
         if (
           selectedStatus === 'completed' &&
           !(t.status === 'completed' && t.approvalStatus === 'approved')
         )
-          return false;
+          continue;
       }
 
       // 4. Department filter
       if (selectedDepartment !== 'all' && t.department !== selectedDepartment) {
-        return false;
+        continue;
       }
 
       // 5. Search query
@@ -180,30 +188,12 @@ export const AdminAllTasksReport: React.FC = () => {
         const memberMatch =
           t.assignedToName?.toLowerCase().includes(q) ||
           t.assignedToEmail?.toLowerCase().includes(q);
-        if (!titleMatch && !catMatch && !memberMatch) return false;
+        if (!titleMatch && !catMatch && !memberMatch) continue;
       }
 
-      return true;
-    });
-  }, [
-    tasks,
-    periodInfo,
-    selectedMemberUid,
-    selectedStatus,
-    selectedDepartment,
-    searchQuery
-  ]);
+      // If it passes all filters, add to array and compute stats
+      filtered.push(t);
 
-  // Overall Statistics for the filtered view
-  const stats = useMemo(() => {
-    const totalCount = filteredTasks.length;
-    let inProgressCount = 0;
-    let pendingCount = 0;
-    let pendingApprovalCount = 0;
-    let completedApprovedCount = 0;
-    let totalIncentive = 0;
-
-    filteredTasks.forEach((t) => {
       if (t.status === 'in_progress') {
         inProgressCount++;
       } else if (t.status === 'completed' && t.approvalStatus === 'pending_approval') {
@@ -214,17 +204,27 @@ export const AdminAllTasksReport: React.FC = () => {
         completedApprovedCount++;
       }
       totalIncentive += t.incentiveAmount || 0;
-    });
+    }
 
     return {
-      totalCount,
-      inProgressCount,
-      pendingCount,
-      pendingApprovalCount,
-      completedApprovedCount,
-      totalIncentive
+      filteredTasks: filtered,
+      stats: {
+        totalCount: filtered.length,
+        inProgressCount,
+        pendingCount,
+        pendingApprovalCount,
+        completedApprovedCount,
+        totalIncentive
+      }
     };
-  }, [filteredTasks]);
+  }, [
+    tasks,
+    periodInfo,
+    selectedMemberUid,
+    selectedStatus,
+    selectedDepartment,
+    searchQuery
+  ]);
 
   // PDF Generator Function
   const handleDownloadPDF = async () => {
