@@ -48,39 +48,41 @@ export function formatMemberDisplayName(username: string, realName?: string | nu
 export async function syncAllTeamMembers(): Promise<void> {
   const cachedNames = getCachedRealNames();
 
-  for (const member of TEAM_MEMBERS_LIST) {
-    const userDocRef = doc(db, 'users', member.username);
-    const teamDocRef = doc(db, 'team_members', member.username);
+  await Promise.all(
+    TEAM_MEMBERS_LIST.map(async (member) => {
+      const userDocRef = doc(db, 'users', member.username);
+      const teamDocRef = doc(db, 'team_members', member.username);
 
-    try {
-      const snap = await getDoc(userDocRef);
-      const existingData = snap.exists() ? snap.data() : null;
-      const existingRealName = existingData?.realName || cachedNames[member.username] || '';
+      try {
+        const snap = await getDoc(userDocRef);
+        const existingData = snap.exists() ? snap.data() : null;
+        const existingRealName = existingData?.realName || cachedNames[member.username] || '';
 
-      const userProfile: UserProfile = {
-        id: member.username,
-        username: member.username,
-        realName: existingRealName,
-        name: formatMemberDisplayName(member.username, existingRealName),
-        email: `${member.username}@team.local`,
-        department: member.department,
-        role: 'user',
-        active: true,
-        approvalStatus: 'approved',
-        archived: false,
-        createdAt: existingData?.createdAt || new Date().toISOString(),
-      };
+        const userProfile: UserProfile = {
+          id: member.username,
+          username: member.username,
+          realName: existingRealName,
+          name: formatMemberDisplayName(member.username, existingRealName),
+          email: `${member.username}@team.local`,
+          department: member.department,
+          role: 'user',
+          active: true,
+          approvalStatus: 'approved',
+          archived: false,
+          createdAt: existingData?.createdAt || new Date().toISOString(),
+        };
 
-      await setDoc(userDocRef, userProfile, { merge: true });
-      await setDoc(teamDocRef, {
-        username: member.username,
-        realName: existingRealName,
-        department: member.department,
-      }, { merge: true });
-    } catch (err) {
-      console.warn(`Sync notice for ${member.username}:`, err);
-    }
-  }
+        await setDoc(userDocRef, userProfile, { merge: true });
+        await setDoc(teamDocRef, {
+          username: member.username,
+          realName: existingRealName,
+          department: member.department,
+        }, { merge: true });
+      } catch (err) {
+        console.warn(`Sync notice for ${member.username}:`, err);
+      }
+    })
+  );
 }
 
 // Update real name for a team member
