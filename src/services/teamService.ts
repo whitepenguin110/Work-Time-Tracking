@@ -17,11 +17,17 @@ export interface TeamMemberRecord {
 
 const LOCAL_STORAGE_REAL_NAMES_KEY = 'kajer_hishab_member_real_names_v1';
 
+let cachedNamesMap: Record<string, string> | null = null;
+
 // Read cached real names from localStorage
 export function getCachedRealNames(): Record<string, string> {
+  if (cachedNamesMap) {
+    return cachedNamesMap;
+  }
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_REAL_NAMES_KEY);
-    return raw ? JSON.parse(raw) : {};
+    cachedNamesMap = raw ? JSON.parse(raw) : {};
+    return cachedNamesMap as Record<string, string>;
   } catch {
     return {};
   }
@@ -29,6 +35,7 @@ export function getCachedRealNames(): Record<string, string> {
 
 // Save real names to localStorage
 export function setCachedRealNames(map: Record<string, string>): void {
+  cachedNamesMap = map;
   try {
     localStorage.setItem(LOCAL_STORAGE_REAL_NAMES_KEY, JSON.stringify(map));
   } catch (err) {
