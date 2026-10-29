@@ -161,7 +161,6 @@ export async function seedCategoriesIfEmpty(): Promise<boolean> {
     const snapshot = await getDocs(q);
 
     if (snapshot.empty) {
-      console.log('ক্যাটাগরি ডাটাবেস খালি। শুরুর ক্যাটাগরিগুলো সংরক্ষণ করা হচ্ছে...');
       const batch = writeBatch(db);
       for (const item of INITIAL_CATEGORIES) {
         const newDocRef = doc(catCol);
