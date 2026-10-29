@@ -162,8 +162,15 @@ export const AdminUsers: React.FC = () => {
   const combinedMembers = useMemo(() => {
     const cachedNames = getCachedRealNames();
 
+    // Create a Map of users keyed by their lowercase username for O(1) lookups
+    const usersMap = new Map<string, UserProfile>();
+    for (const u of users) {
+      const key = (u.username || u.id).toLowerCase();
+      usersMap.set(key, u);
+    }
+
     return TEAM_MEMBERS_LIST.map((tm) => {
-      const fsUser = users.find((u) => (u.username || u.id).toLowerCase() === tm.username.toLowerCase());
+      const fsUser = usersMap.get(tm.username.toLowerCase());
       const realName = fsUser?.realName || cachedNames[tm.username] || '';
       const displayName = formatMemberDisplayName(tm.username, realName);
 
