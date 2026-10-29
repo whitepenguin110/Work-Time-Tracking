@@ -1,8 +1,94 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Default deny all access
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    // Authentication helpers
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    // Admin verification: document must exist in /admins/{email}
+    function isAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 1. Users collection: users/{uid}
+    match /users/{userId} {
+      allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow list: if isSignedIn() && isAdmin();
+
+      // On create: Only the owner can create their profile.
+      // Must have role == "user", active == true, department in ["graphic", "video"]
+      allow create: if isOwner(userId) &&
+        request.resource.data.keys().hasAll(['name', 'email', 'department', 'role', 'active']) &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 100 &&
+        request.resource.data.email is string && request.resource.data.email == request.auth.token.email &&
+        request.resource.data.department in ['graphic', 'video'] &&
+        request.resource.data.role == 'user' &&
+        request.resource.data.active == true;
+
+      // On update:
+      // Regular user can ONLY update their own name (cannot change role, active, or department)
+      // Admins can update department and active status
+      allow update: if isSignedIn() && (
+        (isOwner(userId) &&
+         request.resource.data.email == resource.data.email &&
+         request.resource.data.role == resource.data.role &&
+         request.resource.data.department == resource.data.department &&
+         request.resource.data.active == resource.data.active &&
+         request.resource.data.name is string && request.resource.data.name.size() > 0) ||
+        (isAdmin() &&
+         request.resource.data.email == resource.data.email &&
+         request.resource.data.role == resource.data.role &&
+         request.resource.data.department in ['graphic', 'video'] &&
+         request.resource.data.active is bool)
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // 2. Categories collection: categories/{id}
+    match /categories/{categoryId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // 3. Tasks collection: tasks/{id}
+    match /tasks/{taskId} {
+      allow get, list: if isSignedIn() && (resource.data.ownerUid == request.auth.uid || isAdmin());
+
+      allow create: if isSignedIn() &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+        request.resource.data.department in ['graphic', 'video'] &&
+        request.resource.data.status in ['pending', 'in_progress', 'completed'];
+
+      // Owner can update their own task; admins CANNOT edit
+      allow update: if isSignedIn() &&
+        resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.ownerUid == resource.data.ownerUid &&
+        request.resource.data.name is string && request.resource.data.name.size() > 0 &&
+        request.resource.data.status in ['pending', 'in_progress', 'completed'];
+
+      // Owner can delete their own task; admins CANNOT delete
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // 4. Admins collection: admins/{email}
+    match /admins/{email} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
   }
 }
